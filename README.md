@@ -103,6 +103,39 @@ After Clang is installed, run **EngineLink: Generate compile_commands.json** fro
 
 **Don’t need `compile_commands.json` yet?** Set `enginelink.autoGenerateCompileCommands` to `false` in settings to skip the step on activation and avoid the error in the output channel.
 
+#### Where the file is written (important for clangd)
+
+When generation **succeeds**, UnrealBuildTool writes the database next to the **engine root**, not inside your game project folder. EngineLink’s output will look like:
+
+```text
+ClangDatabase written to C:\Program Files\Epic Games\UE_5.7\compile_commands.json
+Result: Succeeded
+```
+
+So the file lives beside `Engine/` (e.g. `UE_5.7\compile_commands.json`), while your `.uproject` and `Source/` are elsewhere (e.g. `Documents\Unreal Projects\MyGame`).
+
+#### Why **clangd** still says “Failed to find compilation database”
+
+Extensions such as **[clangd](https://marketplace.visualstudio.com/items?itemName=llvm-vs-code-extensions.vscode-clangd)** search for `compile_commands.json` by walking **up** from the open file (e.g. `Source/MyGame/MyClass.cpp`) through parent directories. They typically stop at your **workspace / project root** and **never** reach `C:\Program Files\Epic Games\UE_5.7`, so clangd falls back to guessing compile flags and you’ll see missing includes / weak IntelliSense even though EngineLink generated the JSON successfully.
+
+#### Fix: point clangd at the engine folder
+
+In your **game project** repository (the folder you open in Cursor), add workspace settings so clangd loads the database from the engine directory. Create or edit **`.vscode/settings.json`**:
+
+```json
+{
+  "clangd.arguments": [
+    "--compile-commands-dir=C:/Program Files/Epic Games/UE_5.7"
+  ]
+}
+```
+
+- Use the **same directory** shown in EngineLink’s log line *“ClangDatabase written to …”* (the folder **containing** `compile_commands.json`, not the file itself).
+- Prefer **forward slashes** (`C:/Program Files/...`) in JSON to avoid escaping backslashes.
+- Reload the window (**Developer: Reload Window**) or restart clangd after saving.
+
+This is **workspace-specific** and safe to commit so everyone on the team with the same engine path benefits; if engine paths differ per machine, use local (user) settings or a documented team convention.
+
 ---
 
 ## 🚀 Installation
@@ -147,6 +180,8 @@ code --install-extension enginelink-0.1.0.vsix
 If auto-detection fails, you can override paths in settings (see [Configuration](#%EF%B8%8F-configuration)).
 
 If you see **Clang x64 must be installed** in the EngineLink output after opening a project, that’s only for **`compile_commands.json`** generation — install Clang (see [compile_commands.json & Clang](#compile_commandsjson--clang)) or turn off `enginelink.autoGenerateCompileCommands`.
+
+If you use **clangd** and generation **succeeds** but clangd still logs **Failed to find compilation database**, UBT wrote the file under your **engine** folder — set `clangd.arguments` / `--compile-commands-dir` in `.vscode/settings.json` (see the **clangd** subsections under [`compile_commands.json` & Clang](#compile_commandsjson--clang)).
 
 ---
 
