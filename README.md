@@ -62,13 +62,11 @@ Press `F5` to launch the Extension Development Host, or package it with `npm run
 
 ---
 
-### Step 3 — Install C/C++ for Cursor (IntelliSense)
+### Step 3 — C/C++ for Cursor (IntelliSense — installed automatically)
 
 EngineLink handles **building** your project, but you need a language server for **IntelliSense** (code completion, go-to-definition, diagnostics on the fly).
 
-Install **[C/C++ for Cursor](https://marketplace.visualstudio.com/items?itemName=cursor.cursor-cpp)** from the Extensions panel. This is Cursor's official C/C++ extension — it adds LSP, debugging, and code browsing support using **clangd** under the hood.
-
-> We're considering bundling this as an **extension pack** in a future release so you get both in one install.
+EngineLink is an **extension pack** that automatically installs **[C/C++ for Cursor](https://marketplace.visualstudio.com/items?itemName=anysphere.cpptools)** — Cursor's official C/C++ extension. It adds LSP, debugging, and code browsing support using **clangd** under the hood. You don't need to install it separately.
 
 #### Point clangd at your compile database
 

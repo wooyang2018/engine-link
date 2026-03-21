@@ -13,8 +13,12 @@
     "vscode": "^1.85.0"
   },
   "categories": [
+    "Extension Packs",
     "Other",
     "Programming Languages"
+  ],
+  "extensionPack": [
+    "anysphere.cpptools"
   ],
   "keywords": [
     "unreal engine",
