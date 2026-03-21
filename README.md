@@ -52,6 +52,7 @@ EngineLink auto-generates `.cursor/rules/*.mdc` files that teach Cursor's AI how
 - **⚡ Live Coding** — trigger `Ctrl+Alt+F11` hot-reload in a running Unreal Editor session
 - **🧠 Editor-aware builds** — detects when Unreal Editor is running and suggests Live Coding over a full build to avoid DLL lock errors
 - **📄 `compile_commands.json` generation** — runs UBT's `-mode=GenerateClangDatabase` for accurate IntelliSense (**requires Clang x64** on your machine — see [compile_commands.json & Clang](#compile_commandsjson--clang))
+- **🧩 `.clangd` for clangd** — auto-creates or updates a **managed** block in your project’s `.clangd` to suppress false **`builtin_definition`** diagnostics when MSVC intrinsics clash with Clang’s builtins (see [Clangd MSVC builtin suppression](#clangd-msvc-builtin-suppression))
 
 ### 🔍 Auto-Detection
 
@@ -136,6 +137,26 @@ In your **game project** repository (the folder you open in Cursor), add workspa
 
 This is **workspace-specific** and safe to commit so everyone on the team with the same engine path benefits; if engine paths differ per machine, use local (user) settings or a documented team convention.
 
+#### Clangd MSVC builtin suppression
+
+When **clangd** parses your UE C++ with a `compile_commands.json` produced for **MSVC-style** includes, you may see errors like **definition of builtin function** on system/intrinsic headers (e.g. prefetch-related intrinsics). That comes from **Microsoft’s headers defining names that Clang also treats as builtins** — it’s an **IDE / parser quirk**, not a broken `#include` in your game code, and it does **not** mean the real Unreal/MSVC build is wrong.
+
+**EngineLink** can **auto-upsert** a small YAML block into your project’s **`.clangd`** (at the `.uproject` root) so clangd suppresses only that diagnostic class:
+
+```yaml
+# <<< enginelink-managed >>>
+# MSVC intrinsics vs Clang builtins when parsing with clangd (IDE-only; real UE builds still use MSVC).
+Diagnostics:
+  Suppress: builtin_definition
+# <<< end-enginelink-managed >>>
+```
+
+- The block is delimited by **`# <<< enginelink-managed >>>`** / **`# <<< end-enginelink-managed >>>`**. EngineLink **replaces only that region** on future updates so the rest of your `.clangd` stays yours.
+- If you already reference `builtin_definition` elsewhere in `.clangd`, EngineLink **won’t** append a duplicate.
+- After the file changes, run **Clangd: Restart language server** or **Developer: Reload Window**.
+
+To turn this off: set **`enginelink.upsertClangdConfig`** to `false`.
+
 ---
 
 ## 🚀 Installation
@@ -183,6 +204,8 @@ If you see **Clang x64 must be installed** in the EngineLink output after openin
 
 If you use **clangd** and generation **succeeds** but clangd still logs **Failed to find compilation database**, UBT wrote the file under your **engine** folder — set `clangd.arguments` / `--compile-commands-dir` in `.vscode/settings.json` (see the **clangd** subsections under [`compile_commands.json` & Clang](#compile_commandsjson--clang)).
 
+EngineLink also maintains a **`.clangd`** snippet for **`builtin_definition`** suppression when **`enginelink.upsertClangdConfig`** is enabled (see [Clangd MSVC builtin suppression](#clangd-msvc-builtin-suppression)).
+
 ---
 
 ## 🎮 Commands
@@ -218,6 +241,7 @@ All settings are scoped under `enginelink.*` and can be set in your workspace or
 | `enginelink.buildTarget` | `enum` | `Editor` | Build target type: `Editor`, `Game`, `Client`, `Server` |
 | `enginelink.platform` | `string` | `Win64` | Target platform |
 | `enginelink.autoGenerateCompileCommands` | `boolean` | `true` | Auto-generate `compile_commands.json` on project detection (requires **Clang x64**; set `false` if you haven’t installed Clang) |
+| `enginelink.upsertClangdConfig` | `boolean` | `true` | Create/update project `.clangd` with a managed `builtin_definition` suppression for clangd + MSVC headers |
 | `enginelink.liveCoding.method` | `enum` | `keystroke` | Live Coding trigger method (`keystroke` or `disabled`) |
 | `enginelink.vsBuildTools.path` | `string` | `""` | Manual override for VS Build Tools install path |
 
@@ -289,7 +313,8 @@ src/
 │   └── settings.ts               # Typed settings accessor
 ├── cursor/
 │   ├── mcpServer.ts              # MCP server lifecycle and IPC
-│   └── rulesGenerator.ts         # .cursor/rules/*.mdc generation
+│   ├── rulesGenerator.ts         # .cursor/rules/*.mdc generation
+│   └── clangdConfig.ts          # .clangd managed block (clangd suppressions)
 ├── detection/
 │   ├── projectDetector.ts        # .uproject scanning and selection
 │   ├── engineDiscovery.ts        # Engine discovery (registry + filesystem)

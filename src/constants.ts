@@ -23,6 +23,7 @@ export const Config = {
   BuildTarget: `${EXTENSION_ID}.buildTarget`,
   Platform: `${EXTENSION_ID}.platform`,
   AutoGenerateCompileCommands: `${EXTENSION_ID}.autoGenerateCompileCommands`,
+  UpsertClangdConfig: `${EXTENSION_ID}.upsertClangdConfig`,
   LiveCodingMethod: `${EXTENSION_ID}.liveCoding.method`,
   VSBuildToolsPath: `${EXTENSION_ID}.vsBuildTools.path`,
 } as const;

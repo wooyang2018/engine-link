@@ -34,6 +34,10 @@ export class EngineLinkSettings {
     return this.config.get<boolean>('autoGenerateCompileCommands', true);
   }
 
+  get upsertClangdConfig(): boolean {
+    return this.config.get<boolean>('upsertClangdConfig', true);
+  }
+
   get liveCodingMethod(): 'keystroke' | 'disabled' {
     return this.config.get<'keystroke' | 'disabled'>('liveCoding.method', 'keystroke');
   }

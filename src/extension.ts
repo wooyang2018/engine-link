@@ -9,6 +9,7 @@ import { EngineLinkSettings } from './config/settings';
 import { StatusBarManager } from './ui/statusBar';
 import { createOutputChannel } from './ui/outputChannel';
 import { generateCursorRules } from './cursor/rulesGenerator';
+import { ensureClangdConfig } from './cursor/clangdConfig';
 import { startMcpServer, sendStateToMcp, stopMcpServer } from './cursor/mcpServer';
 import { EngineLinkTaskProvider } from './build/taskProvider';
 import type { EngineLinkContext } from './types';
@@ -159,6 +160,18 @@ async function runDetectionPipeline(options?: { allowAutoCompileDb?: boolean }) 
       outputChannel.appendLine('[EngineLink] Cursor rules generated in .cursor/rules/');
     } catch (err) {
       outputChannel.appendLine(`[EngineLink] Failed to generate Cursor rules: ${err}`);
+    }
+  }
+
+  // clangd: suppress MSVC vs Clang intrinsic false positives in IDE
+  if (context.project && settings.upsertClangdConfig) {
+    try {
+      const changed = await ensureClangdConfig(context.project.projectRoot);
+      if (changed) {
+        outputChannel.appendLine('[EngineLink] .clangd updated (clangd: suppress builtin_definition).');
+      }
+    } catch (err) {
+      outputChannel.appendLine(`[EngineLink] Failed to update .clangd: ${err}`);
     }
   }
 
