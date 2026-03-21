@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { Commands, ContextKeys, EXTENSION_ID } from './constants';
+import { fileExists } from './platform/paths';
 import { detectProjects, selectProject, watchForProjectChanges } from './detection/projectDetector';
 import { discoverEngines, findMatchingEngine, promptSelectEngine, createManualInstallation } from './detection/engineDiscovery';
 import { detectBuildTools } from './detection/buildToolsDetector';
@@ -51,8 +53,8 @@ export async function activate(extensionContext: vscode.ExtensionContext) {
   // Register commands
   registerCommands(extensionContext);
 
-  // Run detection pipeline
-  await runDetectionPipeline();
+  // Run detection pipeline (auto compile_commands only on this first pass — see runDetectionPipeline)
+  await runDetectionPipeline({ allowAutoCompileDb: true });
 
   // Start MCP server
   await startMcpServer(extensionContext.extensionPath, context, settings);
@@ -79,8 +81,9 @@ export function deactivate() {
 
 /**
  * Run the full detection pipeline: project → engine → build tools.
+ * @param options.allowAutoCompileDb — if true, may run UBT GenerateClangDatabase when settings allow and no compile_commands.json exists (activation only).
  */
-async function runDetectionPipeline() {
+async function runDetectionPipeline(options?: { allowAutoCompileDb?: boolean }) {
   const outputChannel = context.outputChannel;
 
   // 1. Detect projects
@@ -156,6 +159,25 @@ async function runDetectionPipeline() {
       outputChannel.appendLine('[EngineLink] Cursor rules generated in .cursor/rules/');
     } catch (err) {
       outputChannel.appendLine(`[EngineLink] Failed to generate Cursor rules: ${err}`);
+    }
+  }
+
+  // Optional compile_commands.json when enginelink.autoGenerateCompileCommands is enabled
+  if (
+    options?.allowAutoCompileDb &&
+    settings.autoGenerateCompileCommands &&
+    context.project &&
+    context.engine
+  ) {
+    const compileDbPath = path.join(context.project.projectRoot, 'compile_commands.json');
+    if (await fileExists(compileDbPath)) {
+      outputChannel.appendLine(
+        '[EngineLink] compile_commands.json already at project root; skipping auto-generation.',
+      );
+    } else {
+      outputChannel.appendLine('[EngineLink] Auto-generating compile_commands.json...');
+      const { generateCompileCommands } = await import('./commands/generateCommands');
+      await generateCompileCommands(context, settings);
     }
   }
 

@@ -51,7 +51,7 @@ EngineLink auto-generates `.cursor/rules/*.mdc` files that teach Cursor's AI how
 - **Build / Rebuild / Clean** — invoke UnrealBuildTool directly from the editor with full output streaming
 - **⚡ Live Coding** — trigger `Ctrl+Alt+F11` hot-reload in a running Unreal Editor session
 - **🧠 Editor-aware builds** — detects when Unreal Editor is running and suggests Live Coding over a full build to avoid DLL lock errors
-- **📄 `compile_commands.json` generation** — runs UBT's `GenerateClangDatabase` mode for accurate IntelliSense
+- **📄 `compile_commands.json` generation** — runs UBT's `-mode=GenerateClangDatabase` for accurate IntelliSense (**requires Clang x64** on your machine — see [compile_commands.json & Clang](#compile_commandsjson--clang))
 
 ### 🔍 Auto-Detection
 
@@ -78,9 +78,30 @@ EngineLink auto-generates `.cursor/rules/*.mdc` files that teach Cursor's AI how
 | Requirement | Notes |
 |---|---|
 | 🪟 **Windows 10/11** | Registry-based engine discovery and PowerShell Live Coding are Windows-specific |
-| 🎮 **Unreal Engine 5.4+** | Tested with UE 5.4; earlier versions may work but aren't officially supported |
+| 🎮 **Unreal Engine 5.4+** | Tested on 5.4–5.7; earlier versions may work but aren't officially supported |
 | 🔧 **Visual Studio Build Tools** | Required for MSVC compilation; detected automatically via `vswhere` |
+| 🐉 **LLVM Clang (x64)** | **Only needed** for `compile_commands.json` / `GenerateClangDatabase`. Normal UE builds use MSVC — see below |
 | ✏️ **Cursor or VS Code** | Engine version `^1.85.0` |
+
+### `compile_commands.json` & Clang
+
+UnrealBuildTool’s **GenerateClangDatabase** mode (what EngineLink uses for `compile_commands.json`) is a **Clang-based** step. If Clang isn’t installed, activation may log something like:
+
+```text
+Clang x64 must be installed in order to build this target.
+Result: Failed (OtherCompilationError)
+```
+
+That does **not** mean your project or MSVC setup is broken — only that the Clang database step can’t run until Clang is available.
+
+**Install Clang x64 on Windows (pick one):**
+
+1. **Visual Studio Installer** → modify your install → **Individual components** → enable **“C++ Clang Compiler for Windows”** (and optionally **“MSBuild support for LLVM toolset”**), then restart the terminal / IDE.
+2. **LLVM** — install the [official Windows pre-built LLVM/Clang](https://releases.llvm.org/) (64-bit) and ensure `clang-cl.exe` / LLVM `bin` is on your `PATH` so UBT can find it.
+
+After Clang is installed, run **EngineLink: Generate compile_commands.json** from the Command Palette (or reload the window so auto-generation runs again if `enginelink.autoGenerateCompileCommands` is `true`).
+
+**Don’t need `compile_commands.json` yet?** Set `enginelink.autoGenerateCompileCommands` to `false` in settings to skip the step on activation and avoid the error in the output channel.
 
 ---
 
@@ -125,6 +146,8 @@ code --install-extension enginelink-0.1.0.vsix
 
 If auto-detection fails, you can override paths in settings (see [Configuration](#%EF%B8%8F-configuration)).
 
+If you see **Clang x64 must be installed** in the EngineLink output after opening a project, that’s only for **`compile_commands.json`** generation — install Clang (see [compile_commands.json & Clang](#compile_commandsjson--clang)) or turn off `enginelink.autoGenerateCompileCommands`.
+
 ---
 
 ## 🎮 Commands
@@ -159,7 +182,7 @@ All settings are scoped under `enginelink.*` and can be set in your workspace or
 | `enginelink.buildConfiguration` | `enum` | `Development` | Build configuration: `Debug`, `DebugGame`, `Development`, `Shipping`, `Test` |
 | `enginelink.buildTarget` | `enum` | `Editor` | Build target type: `Editor`, `Game`, `Client`, `Server` |
 | `enginelink.platform` | `string` | `Win64` | Target platform |
-| `enginelink.autoGenerateCompileCommands` | `boolean` | `true` | Auto-generate `compile_commands.json` on project detection |
+| `enginelink.autoGenerateCompileCommands` | `boolean` | `true` | Auto-generate `compile_commands.json` on project detection (requires **Clang x64**; set `false` if you haven’t installed Clang) |
 | `enginelink.liveCoding.method` | `enum` | `keystroke` | Live Coding trigger method (`keystroke` or `disabled`) |
 | `enginelink.vsBuildTools.path` | `string` | `""` | Manual override for VS Build Tools install path |
 
