@@ -68,11 +68,11 @@ EngineLink handles **building** your project, but you need a language server for
 
 EngineLink is an **extension pack** that automatically installs **[C/C++ for Cursor](https://marketplace.visualstudio.com/items?itemName=anysphere.cpptools)** — Cursor's official C/C++ extension. It adds LSP, debugging, and code browsing support using **clangd** under the hood. You don't need to install it separately.
 
-#### Point clangd at your compile database
+#### Where `compile_commands.json` lives
 
-UBT writes `compile_commands.json` next to the **engine** (e.g. `C:\Program Files\Epic Games\UE_5.7\compile_commands.json`), not in your project folder. clangd searches upward from your source files and won't find it there, so you need to tell it where to look.
+UnrealBuildTool often writes the database next to the **engine** (e.g. `UE_5.7\compile_commands.json`). **EngineLink always copies it to your `.uproject` folder** as `compile_commands.json` at the **project root** after a successful run, so **clangd** can find it when you open files under `Source/` (it walks up to the workspace root).
 
-In your **game project**, create or edit **`.vscode/settings.json`**:
+If IntelliSense still cannot find the compilation database (e.g. generation failed or you use a non-standard layout), you can point clangd at the engine folder manually in **`.vscode/settings.json`**:
 
 ```json
 {
@@ -82,7 +82,7 @@ In your **game project**, create or edit **`.vscode/settings.json`**:
 }
 ```
 
-Use the path shown in EngineLink's output log (*"ClangDatabase written to ..."*) — the **folder** containing `compile_commands.json`, not the file itself. Prefer forward slashes. Reload the window after saving.
+Use the **directory** that contains `compile_commands.json`, forward slashes, then reload the window.
 
 #### MSVC intrinsic false positives (builtin_definition)
 

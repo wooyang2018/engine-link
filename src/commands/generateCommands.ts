@@ -34,9 +34,15 @@ export async function generateCompileCommands(
       ctx.outputChannel.show(true);
       ctx.outputChannel.appendLine(`[EngineLink] ${formatCommandLine(cmd)}`);
 
+      const ubtOutput: string[] = [];
+      const capture = (line: string) => {
+        ubtOutput.push(line);
+        ctx.outputChannel.appendLine(line);
+      };
+
       const result = await spawnAsync(cmd.executable, cmd.args, {
-        onStdout: (line) => ctx.outputChannel.appendLine(line),
-        onStderr: (line) => ctx.outputChannel.appendLine(line),
+        onStdout: capture,
+        onStderr: capture,
         token,
       });
 
@@ -49,8 +55,10 @@ export async function generateCompileCommands(
         return;
       }
 
-      // Find and copy compile_commands.json to project root
-      const placed = await findAndPlaceCompileCommands(ctx);
+      const ubtWrittenPath = extractClangDatabasePath(ubtOutput.join('\n'));
+
+      // Find and copy compile_commands.json to project root (UBT often writes under engine root)
+      const placed = await findAndPlaceCompileCommands(ctx, ubtWrittenPath);
 
       if (placed) {
         vscode.window.showInformationMessage(
@@ -66,9 +74,22 @@ export async function generateCompileCommands(
 }
 
 /**
- * Search for the generated compile_commands.json and copy/symlink to project root.
+ * Parse UBT log line: "ClangDatabase written to C:\...\compile_commands.json"
  */
-async function findAndPlaceCompileCommands(ctx: EngineLinkContext): Promise<boolean> {
+function extractClangDatabasePath(ubtOutput: string): string | undefined {
+  const m = ubtOutput.match(/ClangDatabase written to\s+(.+?)(?:\r?\n|$)/im);
+  if (!m) return undefined;
+  return m[1].trim().replace(/[/\\]+$/, '');
+}
+
+/**
+ * Search for the generated compile_commands.json and copy to project root.
+ * UBT 5.x often writes next to the engine (e.g. UE_5.7\compile_commands.json), not inside the .uproject folder.
+ */
+async function findAndPlaceCompileCommands(
+  ctx: EngineLinkContext,
+  ubtReportedPath?: string,
+): Promise<boolean> {
   if (!ctx.project || !ctx.engine) return false;
 
   const projectRoot = ctx.project.projectRoot;
@@ -76,22 +97,43 @@ async function findAndPlaceCompileCommands(ctx: EngineLinkContext): Promise<bool
 
   // Check if UBT placed it at the project root already
   if (await fileExists(targetPath)) {
-    ctx.outputChannel.appendLine(`[EngineLink] compile_commands.json found at project root.`);
+    ctx.outputChannel.appendLine(`[EngineLink] compile_commands.json already at project root.`);
     return true;
   }
 
-  // Search common output locations
+  const tryCopyFrom = async (sourcePath: string, label: string): Promise<boolean> => {
+    if (!(await fileExists(sourcePath))) return false;
+    const normalized = path.normalize(sourcePath);
+    if (normalized === path.normalize(targetPath)) {
+      ctx.outputChannel.appendLine(`[EngineLink] compile_commands.json at project root (${label}).`);
+      return true;
+    }
+    ctx.outputChannel.appendLine(`[EngineLink] Found compile_commands.json (${label}): ${normalized}`);
+    ctx.outputChannel.appendLine(`[EngineLink] Copying to project root: ${targetPath}`);
+    await fs.promises.copyFile(normalized, targetPath);
+    return true;
+  };
+
+  // 1) Path printed by UBT (most reliable across UE versions)
+  if (ubtReportedPath && (await tryCopyFrom(ubtReportedPath, 'UBT output'))) {
+    return true;
+  }
+
+  // 2) Engine root (common on UE 5.5+)
+  const engineRootDb = path.join(ctx.engine.root, 'compile_commands.json');
+  if (await tryCopyFrom(engineRootDb, 'engine root')) {
+    return true;
+  }
+
+  // 3) Under Intermediate/Build
   const searchPaths = [
     path.join(projectRoot, 'Intermediate', 'Build'),
     path.join(ctx.engine.root, 'Intermediate', 'Build'),
   ];
 
   for (const searchBase of searchPaths) {
-    const found = await findFileRecursive(searchBase, 'compile_commands.json', 4);
-    if (found) {
-      ctx.outputChannel.appendLine(`[EngineLink] Found at: ${found}`);
-      ctx.outputChannel.appendLine(`[EngineLink] Copying to: ${targetPath}`);
-      await fs.promises.copyFile(found, targetPath);
+    const found = await findFileRecursive(searchBase, 'compile_commands.json', 6);
+    if (found && (await tryCopyFrom(found, 'Intermediate/Build search'))) {
       return true;
     }
   }
