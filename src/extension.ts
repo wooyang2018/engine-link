@@ -113,6 +113,13 @@ async function runDetectionPipeline(options?: { allowAutoCompileDb?: boolean }) 
   }
 
   outputChannel.appendLine(`[EngineLink] Project: ${context.project.name} (${context.project.engineAssociation})`);
+  if (context.project.targets.length > 0) {
+    const { pickTargetForType } = await import('./parsers/targetParser');
+    const editorTarget = pickTargetForType(context.project, 'Editor');
+    outputChannel.appendLine(
+      `[EngineLink] UBT targets discovered: ${context.project.targets.length} (.Target.cs); Editor target: ${editorTarget}`,
+    );
+  }
   await setContext(ContextKeys.ProjectDetected, true);
 
   // 2. Discover engines

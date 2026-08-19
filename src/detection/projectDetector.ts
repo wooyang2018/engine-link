@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { parseUProject } from '../parsers/uprojectParser';
+import { discoverProjectTargets } from '../parsers/targetParser';
 import type { UEProject } from '../types';
 
 /**
@@ -13,12 +14,14 @@ export async function detectProjects(): Promise<UEProject[]> {
   for (const uri of uris) {
     try {
       const data = await parseUProject(uri.fsPath);
+      const projectRoot = path.dirname(uri.fsPath);
       projects.push({
         name: path.basename(uri.fsPath, '.uproject'),
         uprojectPath: uri.fsPath,
-        projectRoot: path.dirname(uri.fsPath),
+        projectRoot,
         engineAssociation: data.engineAssociation,
         modules: data.modules,
+        targets: await discoverProjectTargets(projectRoot),
       });
     } catch (err) {
       console.warn(`[EngineLink] Failed to parse ${uri.fsPath}:`, err);

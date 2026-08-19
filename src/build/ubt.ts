@@ -1,5 +1,5 @@
 import type { UEInstallation, UEProject, BuildConfiguration, BuildTargetType, BuildPlatform } from '../types';
-import { TARGET_SUFFIXES } from '../constants';
+import { pickTargetForType } from '../parsers/targetParser';
 
 export interface UBTCommandLine {
   executable: string;
@@ -11,8 +11,7 @@ export interface UBTCommandLine {
  * E.g., "MyProject" + "Editor" → "MyProjectEditor"
  */
 export function resolveTargetName(project: UEProject, targetType: BuildTargetType): string {
-  const suffix = TARGET_SUFFIXES[targetType] ?? '';
-  return project.name + suffix;
+  return pickTargetForType(project, targetType);
 }
 
 /**

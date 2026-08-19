@@ -314,7 +314,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "package": "vsce package",
-    "prepackage": "npm run build"
+    "prepackage": "npm run build",
+    "install:vsix": "powershell -NoProfile -ExecutionPolicy Bypass -File ./Scripts/Install-EngineLink.ps1",
+    "package:only": "powershell -NoProfile -ExecutionPolicy Bypass -File ./Scripts/Install-EngineLink.ps1 -PackageOnly"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

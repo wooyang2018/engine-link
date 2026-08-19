@@ -10,6 +10,13 @@ export interface UEInstallation {
   isSourceBuild: boolean;
 }
 
+/** UBT target discovered from a .Target.cs file */
+export interface UEBuildTarget {
+  name: string;
+  type: BuildTargetType;
+  targetFile: string;
+}
+
 /** Represents a detected UE project */
 export interface UEProject {
   name: string;
@@ -17,6 +24,7 @@ export interface UEProject {
   projectRoot: string;
   engineAssociation: string;
   modules: UEProjectModule[];
+  targets: UEBuildTarget[];
 }
 
 /** Module entry from .uproject */
