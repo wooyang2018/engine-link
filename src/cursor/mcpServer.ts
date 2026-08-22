@@ -181,9 +181,6 @@ async function handleBuildRequest(
     case 'build':
       await vscode.commands.executeCommand(Commands.Build);
       break;
-    case 'rebuild':
-      await vscode.commands.executeCommand(Commands.Rebuild);
-      break;
     case 'clean':
       await vscode.commands.executeCommand(Commands.Clean);
       break;

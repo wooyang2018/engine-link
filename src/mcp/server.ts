@@ -154,9 +154,8 @@ async function handleToolCall(
     }
 
     case 'enginelink_build':
-    case 'enginelink_rebuild':
     case 'enginelink_clean': {
-      const action = name.replace('enginelink_', '') as 'build' | 'rebuild' | 'clean';
+      const action = name.replace('enginelink_', '') as 'build' | 'clean';
       sendToExtension({
         type: 'ipc:buildRequest',
         action,

@@ -5,6 +5,15 @@ import { readRegistryValue, enumerateRegistrySubKeys, readRegistryKeyValues } fr
 import { fileExists, resolveUBTPath, resolveEditorPath } from '../platform/paths';
 import { Registry, COMMON_ENGINE_PATHS } from '../constants';
 import type { UEInstallation, UEProject } from '../types';
+import {
+  formatManualInstallationFailure,
+  parseVersionFromEngineRoot,
+} from './engineInstallationUtils';
+
+export {
+  formatManualInstallationFailure,
+  parseVersionFromEngineRoot,
+} from './engineInstallationUtils';
 
 /**
  * Discover all Unreal Engine installations on the system.
@@ -16,34 +25,60 @@ export async function discoverEngines(): Promise<UEInstallation[]> {
   // 1. Scan launcher installs from registry (HKLM)
   const launcherInstalls = await scanLauncherInstalls();
   for (const install of launcherInstalls) {
-    const key = install.root.toLowerCase();
-    if (!seen.has(key)) {
-      seen.add(key);
-      installations.push(install);
-    }
+    addInstallation(installations, seen, install);
   }
 
   // 2. Scan source builds from registry (HKCU)
   const sourceBuilds = await scanSourceBuilds();
   for (const install of sourceBuilds) {
-    const key = install.root.toLowerCase();
-    if (!seen.has(key)) {
-      seen.add(key);
-      installations.push(install);
-    }
+    addInstallation(installations, seen, install);
   }
 
   // 3. Scan common file system paths
   const pathScans = await scanCommonPaths();
   for (const install of pathScans) {
-    const key = install.root.toLowerCase();
-    if (!seen.has(key)) {
-      seen.add(key);
-      installations.push(install);
-    }
+    addInstallation(installations, seen, install);
   }
 
   return installations;
+}
+
+/**
+ * Merge discovered engines with a configured manual root and the current selection.
+ */
+export async function resolveEngineCandidates(options?: {
+  configuredEngineRoot?: string;
+  currentEngine?: UEInstallation;
+}): Promise<UEInstallation[]> {
+  const installations: UEInstallation[] = [];
+  const seen = new Set<string>();
+
+  const configuredRoot = options?.configuredEngineRoot?.trim();
+  if (configuredRoot) {
+    addInstallation(installations, seen, await createManualInstallation(configuredRoot));
+  }
+
+  if (options?.currentEngine) {
+    addInstallation(installations, seen, options.currentEngine);
+  }
+
+  for (const install of await discoverEngines()) {
+    addInstallation(installations, seen, install);
+  }
+
+  return installations;
+}
+
+function addInstallation(
+  installations: UEInstallation[],
+  seen: Set<string>,
+  install: UEInstallation | undefined,
+): void {
+  if (!install) return;
+  const key = install.root.toLowerCase();
+  if (seen.has(key)) return;
+  seen.add(key);
+  installations.push(install);
 }
 
 /**
@@ -94,7 +129,7 @@ async function scanCommonPaths(): Promise<UEInstallation[]> {
       for (const entry of entries) {
         if (entry.isDirectory() && entry.name.startsWith('UE_')) {
           const engineRoot = path.join(basePath, entry.name);
-          const version = entry.name.replace('UE_', '');
+          const version = parseVersionFromEngineRoot(engineRoot);
           const install = await buildInstallation(engineRoot, version, 'path-scan', false);
           if (install) installations.push(install);
         }
@@ -156,20 +191,45 @@ export async function findMatchingEngine(
  */
 export async function promptSelectEngine(
   installations: UEInstallation[],
+  options?: {
+    currentEngine?: UEInstallation;
+    configuredEngineRoot?: string;
+  },
 ): Promise<UEInstallation | undefined> {
   if (installations.length === 0) {
-    vscode.window.showErrorMessage(
-      'EngineLink: No Unreal Engine installations found. Set enginelink.engineRoot in settings.',
-    );
+    const configuredRoot = options?.configuredEngineRoot?.trim();
+    if (configuredRoot) {
+      vscode.window.showErrorMessage(
+        `EngineLink: ${formatManualInstallationFailure(configuredRoot)}`,
+      );
+    } else {
+      vscode.window.showErrorMessage(
+        'EngineLink: No Unreal Engine installations found. Set enginelink.engineRoot in settings or install UE via Epic Games Launcher.',
+      );
+    }
     return undefined;
   }
 
-  const items = installations.map((i) => ({
-    label: `UE ${i.version}`,
-    description: i.root,
-    detail: i.isSourceBuild ? 'Source build' : 'Launcher install',
-    installation: i,
-  }));
+  const currentRoot = options?.currentEngine?.root.toLowerCase();
+
+  const items = installations.map((i) => {
+    const isCurrent = currentRoot === i.root.toLowerCase();
+    const sourceLabel =
+      i.source === 'manual'
+        ? 'Manual override'
+        : i.isSourceBuild
+          ? 'Source build'
+          : i.source === 'path-scan'
+            ? 'Path scan'
+            : 'Launcher install';
+
+    return {
+      label: isCurrent ? `$(check) UE ${i.version} (current)` : `UE ${i.version}`,
+      description: i.root,
+      detail: sourceLabel,
+      installation: i,
+    };
+  });
 
   const picked = await vscode.window.showQuickPick(items, {
     placeHolder: 'Select an Unreal Engine installation',
@@ -184,5 +244,6 @@ export async function promptSelectEngine(
 export async function createManualInstallation(
   engineRoot: string,
 ): Promise<UEInstallation | undefined> {
-  return buildInstallation(engineRoot, 'manual', 'manual', false);
+  const version = parseVersionFromEngineRoot(engineRoot);
+  return buildInstallation(engineRoot, version, 'manual', false);
 }

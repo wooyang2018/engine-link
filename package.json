@@ -44,12 +44,6 @@
         "icon": "$(play)"
       },
       {
-        "command": "enginelink.rebuild",
-        "title": "Rebuild (Clean + Build)",
-        "category": "EngineLink",
-        "icon": "$(refresh)"
-      },
-      {
         "command": "enginelink.clean",
         "title": "Clean",
         "category": "EngineLink",
@@ -165,6 +159,12 @@
           "type": "string",
           "default": "",
           "description": "Manual override for VS Build Tools installation path."
+        },
+        "enginelink.statusBar.showContextInfo": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show platform and project name in the status bar.",
+          "scope": "resource"
         }
       }
     },
@@ -179,7 +179,6 @@
             "type": "string",
             "enum": [
               "build",
-              "rebuild",
               "clean",
               "generateCompileCommands"
             ],
@@ -267,18 +266,13 @@
       ],
       "editor/title": [
         {
-          "command": "enginelink.rebuild",
+          "command": "enginelink.clean",
           "group": "1_enginelink@1",
           "when": "enginelink.projectDetected"
         },
         {
-          "command": "enginelink.clean",
-          "group": "1_enginelink@2",
-          "when": "enginelink.projectDetected"
-        },
-        {
           "command": "enginelink.generateCompileCommands",
-          "group": "1_enginelink@3",
+          "group": "1_enginelink@2",
           "when": "enginelink.projectDetected"
         },
         {

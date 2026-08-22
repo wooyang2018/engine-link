@@ -61,7 +61,7 @@ export type BuildPlatform = 'Win64' | 'Linux' | 'Mac';
 /** Task definition for the enginelink task type */
 export interface EngineLinkTaskDefinition extends vscode.TaskDefinition {
   type: 'enginelink';
-  action: 'build' | 'rebuild' | 'clean' | 'generateCompileCommands';
+  action: 'build' | 'clean' | 'generateCompileCommands';
   configuration?: BuildConfiguration;
   targetType?: BuildTargetType;
   platform?: BuildPlatform;

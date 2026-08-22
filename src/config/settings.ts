@@ -46,6 +46,10 @@ export class EngineLinkSettings {
     return this.config.get<string>('vsBuildTools.path', '');
   }
 
+  get statusBarShowContextInfo(): boolean {
+    return this.config.get<boolean>('statusBar.showContextInfo', true);
+  }
+
   /**
    * Listen for configuration changes.
    */

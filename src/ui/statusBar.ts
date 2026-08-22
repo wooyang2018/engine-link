@@ -7,7 +7,7 @@ import type { EngineLinkSettings } from '../config/settings';
  * EngineLink status bar — Rider-style toolbar at the bottom.
  *
  * Layout (left to right):
- *   [▶ Build] | [⟳ Rebuild] | [🗑 Clean] | [Development ▾] | [Editor ▾] | [Win64] | [ProjectName] | [UE 5.4] | [⚡ Live Coding] | [🚀 Launch]
+ *   [▶ Build] | [🗑 Clean] | [Development ▾] | [Editor ▾] | [Win64] | [ProjectName] | [UE 5.4] | [⚡ Live Coding] | [🚀 Launch]
  *
  * - Action buttons have colored backgrounds for visibility
  * - Build button shows spinner + red error state
@@ -16,7 +16,6 @@ import type { EngineLinkSettings } from '../config/settings';
 export class StatusBarManager {
   // Action buttons
   private buildBtn: vscode.StatusBarItem;
-  private rebuildBtn: vscode.StatusBarItem;
   private cleanBtn: vscode.StatusBarItem;
   private liveCodingBtn: vscode.StatusBarItem;
   private launchBtn: vscode.StatusBarItem;
@@ -37,10 +36,6 @@ export class StatusBarManager {
     this.buildBtn = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 300);
     this.buildBtn.command = Commands.Build;
     this.buildBtn.name = 'EngineLink: Build';
-
-    this.rebuildBtn = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 299);
-    this.rebuildBtn.command = Commands.Rebuild;
-    this.rebuildBtn.name = 'EngineLink: Rebuild';
 
     this.cleanBtn = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 298);
     this.cleanBtn.command = Commands.Clean;
@@ -93,10 +88,6 @@ export class StatusBarManager {
     this.buildBtn.color = undefined;
     this.buildBtn.command = Commands.Build;
 
-    // ── REBUILD button ──
-    this.rebuildBtn.text = '$(refresh)  Rebuild';
-    this.rebuildBtn.tooltip = 'Clean + Build';
-
     // ── CLEAN button ──
     this.cleanBtn.text = '$(trash)  Clean';
     this.cleanBtn.tooltip = 'Clean build artifacts';
@@ -148,18 +139,21 @@ export class StatusBarManager {
     // Show/hide
     if (ctx.project) {
       this.buildBtn.show();
-      this.rebuildBtn.show();
       this.cleanBtn.show();
       this.configBtn.show();
       this.targetBtn.show();
-      this.platformBtn.show();
-      this.projectBtn.show();
+      if (settings.statusBarShowContextInfo) {
+        this.platformBtn.show();
+        this.projectBtn.show();
+      } else {
+        this.platformBtn.hide();
+        this.projectBtn.hide();
+      }
       this.engineBtn.show();
       this.liveCodingBtn.show();
       this.launchBtn.show();
     } else {
       this.buildBtn.hide();
-      this.rebuildBtn.hide();
       this.cleanBtn.hide();
       this.configBtn.hide();
       this.targetBtn.hide();
@@ -208,7 +202,6 @@ export class StatusBarManager {
 
   dispose(): void {
     this.buildBtn.dispose();
-    this.rebuildBtn.dispose();
     this.cleanBtn.dispose();
     this.configBtn.dispose();
     this.targetBtn.dispose();

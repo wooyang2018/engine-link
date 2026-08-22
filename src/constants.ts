@@ -4,7 +4,6 @@ export const EXTENSION_ID = 'enginelink';
 /** Command IDs */
 export const Commands = {
   Build: `${EXTENSION_ID}.build`,
-  Rebuild: `${EXTENSION_ID}.rebuild`,
   Clean: `${EXTENSION_ID}.clean`,
   LaunchEditor: `${EXTENSION_ID}.launchEditor`,
   LiveCoding: `${EXTENSION_ID}.liveCoding`,
@@ -26,6 +25,7 @@ export const Config = {
   UpsertClangdConfig: `${EXTENSION_ID}.upsertClangdConfig`,
   LiveCodingMethod: `${EXTENSION_ID}.liveCoding.method`,
   VSBuildToolsPath: `${EXTENSION_ID}.vsBuildTools.path`,
+  StatusBarShowContextInfo: `${EXTENSION_ID}.statusBar.showContextInfo`,
 } as const;
 
 /** Context keys set via vscode.commands.executeCommand('setContext', ...) */

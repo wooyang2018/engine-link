@@ -44,7 +44,7 @@ export interface IPCStateUpdate {
 
 export interface IPCBuildRequest {
   type: 'ipc:buildRequest';
-  action: 'build' | 'rebuild' | 'clean';
+  action: 'build' | 'clean';
   configuration?: string;
   targetType?: string;
 }

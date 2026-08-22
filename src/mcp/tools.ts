@@ -33,14 +33,6 @@ export const TOOL_DEFINITIONS = [
     },
   },
   {
-    name: 'enginelink_rebuild',
-    description: 'Clean and rebuild the current Unreal Engine project.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {},
-    },
-  },
-  {
     name: 'enginelink_get_build_errors',
     description:
       'Get the current build errors from the last build. Returns a list of errors with file paths, line numbers, error codes, and messages. Use this to diagnose build failures.',

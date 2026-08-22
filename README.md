@@ -124,7 +124,7 @@ If auto-detection fails, override paths in [Configuration](#configuration).
 
 ### Build Integration
 
-- **Build / Rebuild / Clean** — invoke UnrealBuildTool directly with full output streaming
+- **Build / Clean** — invoke UnrealBuildTool directly with full output streaming
 - **Live Coding** (`Ctrl+Alt+F11`) — hot-reload in a running Unreal Editor session
 - **Editor-aware builds** — detects when Unreal Editor is running and suggests Live Coding over a full build to avoid DLL lock errors
 - **`compile_commands.json`** — auto-generates via UBT's `GenerateClangDatabase` mode
@@ -138,7 +138,7 @@ If auto-detection fails, override paths in [Configuration](#configuration).
 
 ### Cursor AI Integration
 
-- **MCP server** — exposes build, clean, rebuild, launch, live-coding, diagnostics, and project info as MCP tools. Tell Cursor *"build my project and fix any errors"* and it handles everything autonomously
+- **MCP server** — exposes build, clean, launch, live-coding, diagnostics, and project info as MCP tools. Tell Cursor *"build my project and fix any errors"* and it handles everything autonomously
 - **Cursor rules** — generates `.cursor/rules/*.mdc` files so the AI writes idiomatic Unreal C++
 
 ### Editor UX
@@ -155,7 +155,6 @@ If auto-detection fails, override paths in [Configuration](#configuration).
 | Command | Keybinding | Description |
 |---|---|---|
 | **Build** | `Ctrl+Shift+B` | Build the project via UnrealBuildTool |
-| **Rebuild (Clean + Build)** | — | Clean all artifacts then build |
 | **Clean** | — | Remove build artifacts |
 | **Launch Unreal Editor** | — | Open UnrealEditor.exe with the current project |
 | **Live Coding Compile** | `Ctrl+Alt+F11` | Hot-reload in the running Unreal Editor |
@@ -184,6 +183,7 @@ All settings live under `enginelink.*` in your workspace or user `settings.json`
 | `enginelink.upsertClangdConfig` | `boolean` | `true` | Auto-update `.clangd` with `builtin_definition` suppression |
 | `enginelink.liveCoding.method` | `enum` | `keystroke` | Live Coding trigger (`keystroke` or `disabled`) |
 | `enginelink.vsBuildTools.path` | `string` | `""` | Manual override for VS Build Tools path |
+| `enginelink.statusBar.showContextInfo` | `boolean` | `true` | Show platform and project name in the status bar |
 
 ---
 
@@ -194,7 +194,6 @@ EngineLink ships a built-in MCP server that Cursor's AI agent can call directly.
 | Tool | Description |
 |---|---|
 | `enginelink_build` | Build (optional config/target overrides) |
-| `enginelink_rebuild` | Clean + build |
 | `enginelink_clean` | Clean build artifacts |
 | `enginelink_get_build_errors` | Errors with file paths, lines, and messages |
 | `enginelink_get_project_info` | Project name, engine version, modules, settings |
@@ -271,7 +270,7 @@ src/
 │   ├── ubt.ts                    # UBT command-line construction
 │   └── taskProvider.ts           # VS Code task provider
 ├── commands/
-│   ├── buildCommands.ts          # Build, rebuild, clean execution
+│   ├── buildCommands.ts          # Build and clean execution
 │   ├── launchCommands.ts         # Launch Unreal Editor
 │   ├── liveCodingCommand.ts      # Live Coding keystroke simulation
 │   └── generateCommands.ts       # compile_commands.json generation

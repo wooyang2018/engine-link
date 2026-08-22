@@ -8,7 +8,7 @@ import type { EngineLinkSettings } from '../config/settings';
  * Designed to be dragged to the right side as a thin vertical icon strip.
  *
  * Icons (top to bottom):
- *   ▶ Build  |  ↻ Rebuild  |  🗑 Clean  |  🚀 Launch  |  ⚡ Live Coding  |  📄 CompileDB
+ *   ▶ Build  |  🗑 Clean  |  🚀 Launch  |  ⚡ Live Coding  |  📄 CompileDB
  *
  * Build icon changes during build (spinner) and after failure (red error icon).
  */
@@ -40,9 +40,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       switch (msg.type) {
         case 'build':
           vscode.commands.executeCommand(Commands.Build);
-          break;
-        case 'rebuild':
-          vscode.commands.executeCommand(Commands.Rebuild);
           break;
         case 'clean':
           vscode.commands.executeCommand(Commands.Clean);
@@ -177,7 +174,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
   <button class="icon-btn primary" id="btn-build" title="Build" onclick="send('build')">&#9654;</button>
-  <button class="icon-btn" id="btn-rebuild" title="Rebuild" onclick="send('rebuild')">&#8635;</button>
   <button class="icon-btn" id="btn-clean" title="Clean" onclick="send('clean')">&#128465;</button>
 
   <div class="separator"></div>
@@ -224,7 +220,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           btn.classList.add('disabled');
         } else if (msg.lastBuild && !msg.lastBuild.success) {
           btn.innerHTML = '&#10060;';
-          btn.title = msg.lastBuild.errors + ' error(s) - click to rebuild';
+          btn.title = msg.lastBuild.errors + ' error(s) - click to build again';
           btn.classList.remove('primary', 'disabled');
           btn.classList.add('error');
         } else {

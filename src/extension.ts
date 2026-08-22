@@ -3,7 +3,14 @@ import * as path from 'path';
 import { Commands, ContextKeys, EXTENSION_ID } from './constants';
 import { fileExists } from './platform/paths';
 import { detectProjects, selectProject, watchForProjectChanges } from './detection/projectDetector';
-import { discoverEngines, findMatchingEngine, promptSelectEngine, createManualInstallation } from './detection/engineDiscovery';
+import {
+  discoverEngines,
+  findMatchingEngine,
+  promptSelectEngine,
+  createManualInstallation,
+  formatManualInstallationFailure,
+  resolveEngineCandidates,
+} from './detection/engineDiscovery';
 import { detectBuildTools } from './detection/buildToolsDetector';
 import { EngineLinkSettings } from './config/settings';
 import { StatusBarManager } from './ui/statusBar';
@@ -125,8 +132,13 @@ async function runDetectionPipeline(options?: { allowAutoCompileDb?: boolean }) 
   // 2. Discover engines
   outputChannel.appendLine('[EngineLink] Discovering UE installations...');
 
-  if (settings.engineRoot) {
-    context.engine = await createManualInstallation(settings.engineRoot) ?? undefined;
+  const configuredEngineRoot = settings.engineRoot.trim();
+  if (configuredEngineRoot) {
+    outputChannel.appendLine(`[EngineLink] Using configured engine root: ${configuredEngineRoot}`);
+    context.engine = await createManualInstallation(configuredEngineRoot) ?? undefined;
+    if (!context.engine) {
+      outputChannel.appendLine(`[EngineLink] ${formatManualInstallationFailure(configuredEngineRoot)}`);
+    }
   } else {
     const engines = await discoverEngines();
     outputChannel.appendLine(`[EngineLink] Found ${engines.length} engine(s).`);
@@ -134,13 +146,16 @@ async function runDetectionPipeline(options?: { allowAutoCompileDb?: boolean }) 
     context.engine = await findMatchingEngine(context.project, engines);
     if (!context.engine && engines.length > 0) {
       outputChannel.appendLine('[EngineLink] No matching engine for EngineAssociation, prompting user...');
-      context.engine = await promptSelectEngine(engines);
+      context.engine = await promptSelectEngine(engines, { currentEngine: context.engine });
     }
   }
 
   if (context.engine) {
     outputChannel.appendLine(`[EngineLink] Engine: UE ${context.engine.version} at ${context.engine.root}`);
     await setContext(ContextKeys.EngineFound, true);
+  } else if (configuredEngineRoot) {
+    outputChannel.appendLine(`[EngineLink] No engine found. Check enginelink.engineRoot: ${configuredEngineRoot}`);
+    await setContext(ContextKeys.EngineFound, false);
   } else {
     outputChannel.appendLine('[EngineLink] No engine found. Set enginelink.engineRoot in settings.');
     await setContext(ContextKeys.EngineFound, false);
@@ -218,11 +233,6 @@ function registerCommands(extensionContext: vscode.ExtensionContext) {
     await executeBuild(context, settings);
   });
 
-  register(Commands.Rebuild, async () => {
-    const { executeRebuild } = await import('./commands/buildCommands');
-    await executeRebuild(context, settings);
-  });
-
   register(Commands.Clean, async () => {
     const { executeClean } = await import('./commands/buildCommands');
     await executeClean(context, settings);
@@ -244,12 +254,19 @@ function registerCommands(extensionContext: vscode.ExtensionContext) {
   });
 
   register(Commands.SelectEngine, async () => {
-    const engines = await discoverEngines();
-    const picked = await promptSelectEngine(engines);
+    const engines = await resolveEngineCandidates({
+      configuredEngineRoot: settings.engineRoot,
+      currentEngine: context.engine,
+    });
+    const picked = await promptSelectEngine(engines, {
+      currentEngine: context.engine,
+      configuredEngineRoot: settings.engineRoot,
+    });
     if (picked) {
       context.engine = picked;
       await setContext(ContextKeys.EngineFound, true);
       statusBar.update(context, settings);
+      sendStateToMcp(context, settings);
     }
   });
 
