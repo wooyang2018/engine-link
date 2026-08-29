@@ -1,7 +1,5 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
 import { Commands, ContextKeys, EXTENSION_ID } from './constants';
-import { fileExists } from './platform/paths';
 import { detectProjects, selectProject, watchForProjectChanges } from './detection/projectDetector';
 import {
   discoverEngines,
@@ -17,6 +15,7 @@ import { StatusBarManager } from './ui/statusBar';
 import { createOutputChannel } from './ui/outputChannel';
 import { generateCursorRules } from './cursor/rulesGenerator';
 import { ensureClangdConfig } from './cursor/clangdConfig';
+import { ensureVscodeSettings } from './cursor/vscodeSettings';
 import { startMcpServer, sendStateToMcp, stopMcpServer } from './cursor/mcpServer';
 import { EngineLinkTaskProvider } from './build/taskProvider';
 import type { EngineLinkContext } from './types';
@@ -188,32 +187,30 @@ async function runDetectionPipeline(options?: { allowAutoCompileDb?: boolean }) 
   // clangd: suppress MSVC vs Clang intrinsic false positives in IDE
   if (context.project && settings.upsertClangdConfig) {
     try {
-      const changed = await ensureClangdConfig(context.project.projectRoot);
+      const changed = await ensureClangdConfig(context.project.projectRoot, {
+        engineRoot: context.engine?.root,
+      });
       if (changed) {
         outputChannel.appendLine('[EngineLink] .clangd updated (clangd: suppress builtin_definition).');
+      }
+      const vscodeChanged = await ensureVscodeSettings(context.project.projectRoot);
+      if (vscodeChanged) {
+        outputChannel.appendLine('[EngineLink] .vscode/settings.json updated for IntelliSense.');
       }
     } catch (err) {
       outputChannel.appendLine(`[EngineLink] Failed to update .clangd: ${err}`);
     }
   }
 
-  // Optional compile_commands.json when enginelink.autoGenerateCompileCommands is enabled
+  // compile_commands.json: generate, post-process stale databases, or regenerate when broken
   if (
     options?.allowAutoCompileDb &&
     settings.autoGenerateCompileCommands &&
     context.project &&
     context.engine
   ) {
-    const compileDbPath = path.join(context.project.projectRoot, 'compile_commands.json');
-    if (await fileExists(compileDbPath)) {
-      outputChannel.appendLine(
-        '[EngineLink] compile_commands.json already at project root; skipping auto-generation.',
-      );
-    } else {
-      outputChannel.appendLine('[EngineLink] Auto-generating compile_commands.json...');
-      const { generateCompileCommands } = await import('./commands/generateCommands');
-      await generateCompileCommands(context, settings);
-    }
+    const { ensureCompileCommandsIntellisense } = await import('./commands/generateCommands');
+    await ensureCompileCommandsIntellisense(context, settings, { allowRegenerate: true });
   }
 
   // Update MCP server state

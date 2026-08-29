@@ -4,6 +4,12 @@ import * as fs from 'fs';
 import { generateClangDatabaseCommandLine, formatCommandLine } from '../build/ubt';
 import { spawnAsync } from '../platform/process';
 import { fileExists } from '../platform/paths';
+import {
+  isCompileCommandsStale,
+  loadCompileCommands,
+  postProcessCompileCommandsFile,
+  type PostProcessResult,
+} from '../cursor/compileCommandsPostProcess';
 import type { EngineLinkContext } from '../types';
 import type { EngineLinkSettings } from '../config/settings';
 
@@ -30,7 +36,7 @@ export async function generateCompileCommands(
       title: 'EngineLink: Generating compile_commands.json...',
       cancellable: true,
     },
-    async (progress, token) => {
+    async (_progress, token) => {
       ctx.outputChannel.show(true);
       ctx.outputChannel.appendLine(`[EngineLink] ${formatCommandLine(cmd)}`);
 
@@ -60,17 +66,125 @@ export async function generateCompileCommands(
       // Find and copy compile_commands.json to project root (UBT often writes under engine root)
       const placed = await findAndPlaceCompileCommands(ctx, ubtWrittenPath);
 
-      if (placed) {
-        vscode.window.showInformationMessage(
-          'EngineLink: compile_commands.json generated successfully.',
-        );
-      } else {
+      if (!placed) {
         vscode.window.showWarningMessage(
           'EngineLink: compile_commands.json generated but could not be located. Check UBT output.',
+        );
+        return;
+      }
+
+      const postProcess = await runCompileCommandsPostProcess(ctx);
+      if (postProcess.stats.broken > 0) {
+        vscode.window.showWarningMessage(
+          `EngineLink: compile_commands.json post-processed with ${postProcess.stats.broken} broken entr${postProcess.stats.broken === 1 ? 'y' : 'ies'}.`,
+        );
+      } else {
+        vscode.window.showInformationMessage(
+          'EngineLink: compile_commands.json generated successfully.',
         );
       }
     },
   );
+}
+
+/**
+ * Post-process compile_commands.json in place and log stats.
+ */
+export async function runCompileCommandsPostProcess(
+  ctx: EngineLinkContext,
+): Promise<PostProcessResult> {
+  if (!ctx.project) {
+    throw new Error('No project detected');
+  }
+
+  const projectRoot = ctx.project.projectRoot;
+  const engineRoot = ctx.engine?.root;
+  const result = await postProcessCompileCommandsFile(projectRoot, engineRoot);
+  ctx.outputChannel.appendLine(
+    `[EngineLink] compile_commands post-process: total=${result.stats.total}, flattened=${result.stats.flattened}, remapped=${result.stats.remapped}, headerAliases=${result.stats.headerAliases}, engineHeaderEntries=${result.stats.engineHeaderEntries}, broken=${result.stats.broken}`,
+  );
+
+  if (engineRoot && result.templateFlags.length > 0) {
+    const { ensureClangdConfig } = await import('../cursor/clangdConfig');
+    const changed = await ensureClangdConfig(projectRoot, {
+      engineRoot,
+      templateFlags: result.templateFlags,
+    });
+    if (changed) {
+      ctx.outputChannel.appendLine('[EngineLink] .clangd updated with engine-source IntelliSense fallback.');
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Ensure compile_commands.json exists and is usable for clangd.
+ * Post-processes stale databases; optionally regenerates when still broken.
+ */
+export async function ensureCompileCommandsIntellisense(
+  ctx: EngineLinkContext,
+  settings: EngineLinkSettings,
+  options: { allowRegenerate?: boolean } = {},
+): Promise<void> {
+  if (!ctx.project || !ctx.engine) return;
+
+  const projectRoot = ctx.project.projectRoot;
+  const compileDbPath = path.join(projectRoot, 'compile_commands.json');
+
+  if (!(await fileExists(compileDbPath))) {
+    if (options.allowRegenerate && settings.autoGenerateCompileCommands) {
+      ctx.outputChannel.appendLine('[EngineLink] Auto-generating compile_commands.json...');
+      await generateCompileCommands(ctx, settings);
+    }
+    return;
+  }
+
+  const stale = await isCompileCommandsStale(projectRoot);
+  const needsEngineHeaders = await needsEngineHeaderPostProcess(projectRoot, ctx.engine.root);
+
+  if (!stale && !needsEngineHeaders) {
+    ctx.outputChannel.appendLine('[EngineLink] compile_commands.json looks current.');
+    return;
+  }
+
+  if (stale) {
+    ctx.outputChannel.appendLine(
+      '[EngineLink] compile_commands.json appears stale (missing .rsp files). Post-processing...',
+    );
+  } else {
+    ctx.outputChannel.appendLine(
+      '[EngineLink] compile_commands.json missing engine header entries. Post-processing...',
+    );
+  }
+  const postProcess = await runCompileCommandsPostProcess(ctx);
+
+  if (postProcess.stats.broken > 0 && options.allowRegenerate && settings.autoGenerateCompileCommands) {
+    ctx.outputChannel.appendLine(
+      '[EngineLink] compile_commands.json still has broken entries after post-process; regenerating...',
+    );
+    await generateCompileCommands(ctx, settings);
+    return;
+  }
+
+  if (postProcess.stats.broken > 0) {
+    ctx.outputChannel.appendLine(
+      `[EngineLink] compile_commands.json still has ${postProcess.stats.broken} broken entr${postProcess.stats.broken === 1 ? 'y' : 'ies'}; run "Generate compile_commands.json".`,
+    );
+  }
+}
+
+async function needsEngineHeaderPostProcess(projectRoot: string, engineRoot: string): Promise<boolean> {
+  try {
+    const entries = await loadCompileCommands(projectRoot);
+    const enginePrefix = path
+      .join(engineRoot, 'Engine', 'Source')
+      .replace(/\\/g, '/')
+      .toLowerCase();
+    return !entries.some((entry) => entry.file.replace(/\\/g, '/').toLowerCase().startsWith(enginePrefix));
+  } catch {
+    return true;
+  }
 }
 
 /**
@@ -95,12 +209,6 @@ async function findAndPlaceCompileCommands(
   const projectRoot = ctx.project.projectRoot;
   const targetPath = path.join(projectRoot, 'compile_commands.json');
 
-  // Check if UBT placed it at the project root already
-  if (await fileExists(targetPath)) {
-    ctx.outputChannel.appendLine(`[EngineLink] compile_commands.json already at project root.`);
-    return true;
-  }
-
   const tryCopyFrom = async (sourcePath: string, label: string): Promise<boolean> => {
     if (!(await fileExists(sourcePath))) return false;
     const normalized = path.normalize(sourcePath);
@@ -113,6 +221,12 @@ async function findAndPlaceCompileCommands(
     await fs.promises.copyFile(normalized, targetPath);
     return true;
   };
+
+  // 0) Already at project root (OutputDir or prior copy)
+  if (await fileExists(targetPath)) {
+    ctx.outputChannel.appendLine('[EngineLink] compile_commands.json at project root.');
+    return true;
+  }
 
   // 1) Path printed by UBT (most reliable across UE versions)
   if (ubtReportedPath && (await tryCopyFrom(ubtReportedPath, 'UBT output'))) {

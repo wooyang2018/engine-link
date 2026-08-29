@@ -94,10 +94,30 @@ When clangd parses UE code with MSVC-style headers, you may see **"definition of
 # <<< enginelink-managed >>>
 Diagnostics:
   Suppress: builtin_definition
+CompileFlags:
+  Add:
+    - --query-driver=**/clang-cl.exe
 # <<< end-enginelink-managed >>>
 ```
 
 This only suppresses that one diagnostic class. EngineLink replaces only its own managed region and won't touch the rest of your `.clangd`. To disable: set `enginelink.upsertClangdConfig` to `false`.
+
+#### Stale `compile_commands.json` and merged (unity) builds
+
+UBT's normal Editor build often compiles many `.cpp` files through auto-generated `Module.*.cpp` **merged compilation** units. The `compile_commands.json` UBT emits separately can still reference per-file `@*.obj.rsp` response files that no longer exist after a regular build — clangd then fails to resolve engine headers (e.g. `'Animation/AnimInstance.h' file not found`).
+
+**EngineLink handles this automatically:**
+
+1. UBT generation uses `-NoExecCodeGenActions` and `-OutputDir=<project root>` for faster, correctly placed output.
+2. After generation (and after successful builds when `enginelink.autoGenerateCompileCommands` is enabled), EngineLink **post-processes** `compile_commands.json`:
+   - Inlines `@*.rsp` into clangd-friendly `arguments` arrays
+   - Remaps broken per-file entries via `Module.*.cpp` when merged builds are in use
+   - Adds matching `.h` entries so opening headers gets a compilation unit
+3. On activation, if the database looks stale (many missing `.rsp` files), EngineLink post-processes it and regenerates when entries are still broken.
+
+EngineLink also upserts `.vscode/settings.json` in the UE project folder so `clangd` and C/C++ use `${workspaceFolder}/compile_commands.json` in multi-root workspaces.
+
+If IntelliSense is still wrong after a normal UBT build, run **Generate compile_commands.json** once, then reload the window. Engine source navigation (F12 into `UAnimInstance`, etc.) works once include paths resolve — you do not need to add the engine source tree to git or the workspace.
 
 ---
 
@@ -127,8 +147,8 @@ If auto-detection fails, override paths in [Configuration](#configuration).
 - **Build / Clean** — invoke UnrealBuildTool directly with full output streaming
 - **Live Coding** (`Ctrl+Alt+F11`) — hot-reload in a running Unreal Editor session
 - **Editor-aware builds** — detects when Unreal Editor is running and suggests Live Coding over a full build to avoid DLL lock errors
-- **`compile_commands.json`** — auto-generates via UBT's `GenerateClangDatabase` mode
-- **`.clangd` management** — suppresses MSVC/Clang `builtin_definition` false positives
+- **`compile_commands.json`** — auto-generates via UBT's `GenerateClangDatabase` mode, post-processes `@*.rsp` for clangd, and refreshes after builds when enabled
+- **`.clangd` management** — suppresses MSVC/Clang `builtin_definition` false positives and sets `--query-driver` for clang-cl
 
 ### Auto-Detection
 

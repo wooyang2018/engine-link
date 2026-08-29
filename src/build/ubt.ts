@@ -87,6 +87,8 @@ export function generateClangDatabaseCommandLine(
     options.configuration ?? 'Development',
     `-project=${project.uprojectPath}`,
     '-mode=GenerateClangDatabase',
+    '-NoExecCodeGenActions',
+    `-OutputDir=${project.projectRoot}`,
   ];
 
   return { executable: engine.ubtPath, args };

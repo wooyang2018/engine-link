@@ -8,14 +8,66 @@ import * as path from 'path';
 export const CLANGD_MANAGED_BEGIN = '# <<< enginelink-managed >>>';
 export const CLANGD_MANAGED_END = '# <<< end-enginelink-managed >>>';
 
-function managedBlock(): string {
-  return [
+export interface ClangdConfigOptions {
+  engineRoot?: string;
+  templateFlags?: string[];
+}
+
+function yamlQuote(value: string): string {
+  return `"${value.replace(/\\/g, '/')}"`;
+}
+
+function formatTemplateFlags(flags: string[]): string[] {
+  const lines: string[] = [];
+  const maxFlags = 256;
+
+  for (let i = 0; i < flags.length && lines.length < maxFlags; i++) {
+    const flag = flags[i];
+    if (flag.startsWith('/Fo') || flag.startsWith('/fp') || flag.startsWith('/Fp')) {
+      continue;
+    }
+
+    if (flag === '/I' || flag === '-I') {
+      const includePath = flags[i + 1];
+      if (includePath) {
+        lines.push(`    - ${yamlQuote('/I')}`);
+        lines.push(`    - ${yamlQuote(includePath)}`);
+        i++;
+      }
+      continue;
+    }
+
+    lines.push(`    - ${yamlQuote(flag)}`);
+  }
+
+  return lines;
+}
+
+function managedBlock(options: ClangdConfigOptions = {}): string {
+  const lines = [
     CLANGD_MANAGED_BEGIN,
     '# MSVC intrinsics vs Clang builtins when parsing with clangd (IDE-only; real UE builds still use MSVC).',
     'Diagnostics:',
     '  Suppress: builtin_definition',
-    CLANGD_MANAGED_END,
-  ].join('\n');
+    'CompileFlags:',
+    '  Add:',
+    '    - --query-driver=**/clang-cl.exe',
+  ];
+
+  if (options.engineRoot && options.templateFlags && options.templateFlags.length > 0) {
+    const engineSourceGlob = `${options.engineRoot.replace(/\\/g, '/')}/Engine/Source/.*`;
+    lines.push(
+      '---',
+      'If:',
+      `  PathMatch: ${yamlQuote(engineSourceGlob)}`,
+      'CompileFlags:',
+      '  Add:',
+      ...formatTemplateFlags(options.templateFlags),
+    );
+  }
+
+  lines.push(CLANGD_MANAGED_END);
+  return lines.join('\n');
 }
 
 /**
@@ -24,9 +76,12 @@ function managedBlock(): string {
  *
  * @returns `true` if the file was created or changed.
  */
-export async function ensureClangdConfig(projectRoot: string): Promise<boolean> {
+export async function ensureClangdConfig(
+  projectRoot: string,
+  options: ClangdConfigOptions = {},
+): Promise<boolean> {
   const filePath = path.join(projectRoot, '.clangd');
-  const block = managedBlock();
+  const block = managedBlock(options);
 
   let content = '';
   try {
@@ -54,7 +109,6 @@ export async function ensureClangdConfig(projectRoot: string): Promise<boolean> 
     return true;
   }
 
-  // No managed block yet: don't duplicate if user already suppresses this diagnostic
   if (/\bbuiltin_definition\b/.test(content)) {
     return false;
   }

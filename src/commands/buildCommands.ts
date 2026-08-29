@@ -3,6 +3,8 @@ import { buildCommandLine, cleanCommandLine } from '../build/ubt';
 import { spawnAsync, isUnrealEditorRunning } from '../platform/process';
 import { parseBuildLine } from '../parsers/buildOutputParser';
 import { getStatusBar, getSettings } from '../extension';
+import { fileExists } from '../platform/paths';
+import * as path from 'path';
 import type { EngineLinkContext, ParsedDiagnostic } from '../types';
 import type { EngineLinkSettings } from '../config/settings';
 
@@ -165,6 +167,18 @@ async function runBuildCommand(
       statusBar.showBuildResult(success, errors, ctx, currentSettings);
 
       if (success) {
+        if (actionName === 'Build' && currentSettings.autoGenerateCompileCommands && ctx.project) {
+          const compileDbPath = path.join(ctx.project.projectRoot, 'compile_commands.json');
+          const { runCompileCommandsPostProcess } = await import('./generateCommands');
+          if (await fileExists(compileDbPath)) {
+            try {
+              await runCompileCommandsPostProcess(ctx);
+            } catch (err) {
+              ctx.outputChannel.appendLine(`[EngineLink] compile_commands post-process after build failed: ${err}`);
+            }
+          }
+        }
+
         if (warnings > 0) {
           vscode.window.showWarningMessage(
             `EngineLink: ${actionName} succeeded with ${warnings} warning(s) in ${(duration / 1000).toFixed(1)}s`,
