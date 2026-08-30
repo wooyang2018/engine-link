@@ -3,6 +3,8 @@ import { Commands } from '../constants';
 import type { EngineLinkContext } from '../types';
 import type { EngineLinkSettings } from '../config/settings';
 
+export type StatusBarAction = 'Build' | 'Clean';
+
 /**
  * EngineLink status bar — Rider-style toolbar at the bottom.
  *
@@ -165,39 +167,62 @@ export class StatusBarManager {
     }
   }
 
-  /**
-   * Show building spinner.
-   */
-  showBuilding(): void {
-    this._isBuilding = true;
-    this.buildBtn.text = '$(sync~spin)  Building...';
-    this.buildBtn.tooltip = 'Build in progress...';
-    this.buildBtn.backgroundColor = undefined;
-    this.buildBtn.command = undefined;
+  private actionButton(action: StatusBarAction): vscode.StatusBarItem {
+    return action === 'Clean' ? this.cleanBtn : this.buildBtn;
   }
 
   /**
-   * Show build result, then revert after delay.
+   * Show in-progress spinner on the button that triggered the action.
    */
-  showBuildResult(success: boolean, errorCount: number, ctx: EngineLinkContext, settings: EngineLinkSettings): void {
+  showActionInProgress(action: StatusBarAction): void {
+    this._isBuilding = true;
+    const btn = this.actionButton(action);
+    btn.text = action === 'Clean' ? '$(sync~spin)  Cleaning...' : '$(sync~spin)  Building...';
+    btn.tooltip = `${action} in progress...`;
+    btn.backgroundColor = undefined;
+    btn.command = undefined;
+  }
+
+  /** @deprecated Use showActionInProgress('Build') */
+  showBuilding(): void {
+    this.showActionInProgress('Build');
+  }
+
+  /**
+   * Show action result on the matching status bar button, then revert after delay.
+   */
+  showActionResult(
+    action: StatusBarAction,
+    success: boolean,
+    errorCount: number,
+    ctx: EngineLinkContext,
+    settings: EngineLinkSettings,
+  ): void {
     this._isBuilding = false;
+    const btn = this.actionButton(action);
+    const retryCommand = action === 'Clean' ? Commands.Clean : Commands.Build;
 
     if (success) {
-      this.buildBtn.text = '$(check)  Build OK';
-      this.buildBtn.tooltip = 'Build succeeded — click to build again';
-      this.buildBtn.backgroundColor = undefined;
-      this.buildBtn.command = Commands.Build;
+      btn.text = action === 'Clean' ? '$(check)  Clean OK' : '$(check)  Build OK';
+      btn.tooltip = `${action} succeeded — click to run again`;
+      btn.backgroundColor = undefined;
+      btn.command = retryCommand;
     } else {
-      this.buildBtn.text = `$(error)  ${errorCount} error${errorCount !== 1 ? 's' : ''}`;
-      this.buildBtn.tooltip = 'Build failed — click to view errors';
-      this.buildBtn.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
-      this.buildBtn.command = 'workbench.action.problems.focus';
+      btn.text = `$(error)  ${errorCount} error${errorCount !== 1 ? 's' : ''}`;
+      btn.tooltip = `${action} failed — click to view errors`;
+      btn.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+      btn.command = 'workbench.action.problems.focus';
     }
 
     setTimeout(() => {
       this._isBuilding = false;
       this.update(ctx, settings);
     }, 5000);
+  }
+
+  /** @deprecated Use showActionResult('Build', ...) */
+  showBuildResult(success: boolean, errorCount: number, ctx: EngineLinkContext, settings: EngineLinkSettings): void {
+    this.showActionResult('Build', success, errorCount, ctx, settings);
   }
 
   dispose(): void {

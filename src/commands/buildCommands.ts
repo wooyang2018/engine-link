@@ -7,6 +7,7 @@ import { fileExists } from '../platform/paths';
 import * as path from 'path';
 import type { EngineLinkContext, ParsedDiagnostic } from '../types';
 import type { EngineLinkSettings } from '../config/settings';
+import type { StatusBarAction } from '../ui/statusBar';
 
 /**
  * Execute a build.
@@ -94,14 +95,14 @@ async function runBuildCommand(
   ctx: EngineLinkContext,
   executable: string,
   args: string[],
-  actionName: string,
+  actionName: StatusBarAction,
 ) {
   const statusBar = getStatusBar();
   const currentSettings = getSettings();
 
   // Check if already building
   if (statusBar.isBuilding) {
-    vscode.window.showWarningMessage('EngineLink: A build is already in progress.');
+    vscode.window.showWarningMessage('EngineLink: A build or clean is already in progress.');
     return;
   }
 
@@ -115,8 +116,8 @@ async function runBuildCommand(
   const diagnostics: ParsedDiagnostic[] = [];
   const startTime = Date.now();
 
-  // Show spinner in status bar
-  statusBar.showBuilding();
+  // Show spinner on the button that triggered this action
+  statusBar.showActionInProgress(actionName);
 
   // Also show progress notification so user sees something even if status bar is hidden
   await vscode.window.withProgress(
@@ -163,8 +164,8 @@ async function runBuildCommand(
         `[EngineLink] ${actionName} ${success ? 'succeeded' : 'failed'} in ${(duration / 1000).toFixed(1)}s (${errors} error(s), ${warnings} warning(s))`,
       );
 
-      // Update status bar with result
-      statusBar.showBuildResult(success, errors, ctx, currentSettings);
+      // Update the matching status bar button with the result
+      statusBar.showActionResult(actionName, success, errors, ctx, currentSettings);
 
       if (success) {
         if (actionName === 'Build' && currentSettings.autoGenerateCompileCommands && ctx.project) {
