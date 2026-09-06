@@ -9,7 +9,7 @@ export type StatusBarAction = 'Build' | 'Clean';
  * EngineLink status bar — Rider-style toolbar at the bottom.
  *
  * Layout (left to right):
- *   [▶ Build] | [🗑 Clean] | [Development ▾] | [Editor ▾] | [Win64] | [ProjectName] | [UE 5.4] | [⚡ Live Coding] | [🚀 Launch]
+ *   [▶ Build] | [🗑 Clean] | [Development ▾] | [Editor ▾] | [Win64] | [ProjectName] | [UE 5.4] | [🚀 Launch]
  *
  * - Action buttons have colored backgrounds for visibility
  * - Build button shows spinner + red error state
@@ -19,7 +19,6 @@ export class StatusBarManager {
   // Action buttons
   private buildBtn: vscode.StatusBarItem;
   private cleanBtn: vscode.StatusBarItem;
-  private liveCodingBtn: vscode.StatusBarItem;
   private launchBtn: vscode.StatusBarItem;
 
   // Config/info items
@@ -63,11 +62,7 @@ export class StatusBarManager {
     this.engineBtn.command = Commands.SelectEngine;
     this.engineBtn.name = 'EngineLink: Engine';
 
-    // --- Right group: Live Coding + Launch ---
-    this.liveCodingBtn = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 292);
-    this.liveCodingBtn.command = Commands.LiveCoding;
-    this.liveCodingBtn.name = 'EngineLink: Live Coding';
-
+    // --- Right group: Launch ---
     this.launchBtn = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 291);
     this.launchBtn.command = Commands.LaunchEditor;
     this.launchBtn.name = 'EngineLink: Launch';
@@ -128,11 +123,6 @@ export class StatusBarManager {
       this.engineBtn.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
     }
 
-    // ── LIVE CODING (colored) ──
-    this.liveCodingBtn.text = '$(zap)  Live Coding';
-    this.liveCodingBtn.tooltip = 'Trigger Live Coding compile (Ctrl+Alt+F11)';
-    this.liveCodingBtn.backgroundColor = new vscode.ThemeColor('statusBarItem.prominentBackground');
-
     // ── LAUNCH (colored) ──
     this.launchBtn.text = '$(rocket)  Launch';
     this.launchBtn.tooltip = 'Launch Unreal Editor';
@@ -152,7 +142,6 @@ export class StatusBarManager {
         this.projectBtn.hide();
       }
       this.engineBtn.show();
-      this.liveCodingBtn.show();
       this.launchBtn.show();
     } else {
       this.buildBtn.hide();
@@ -162,7 +151,6 @@ export class StatusBarManager {
       this.platformBtn.hide();
       this.projectBtn.show();
       this.engineBtn.hide();
-      this.liveCodingBtn.hide();
       this.launchBtn.hide();
     }
   }
@@ -233,7 +221,6 @@ export class StatusBarManager {
     this.platformBtn.dispose();
     this.projectBtn.dispose();
     this.engineBtn.dispose();
-    this.liveCodingBtn.dispose();
     this.launchBtn.dispose();
   }
 }

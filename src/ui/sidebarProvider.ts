@@ -8,7 +8,7 @@ import type { EngineLinkSettings } from '../config/settings';
  * Designed to be dragged to the right side as a thin vertical icon strip.
  *
  * Icons (top to bottom):
- *   ▶ Build  |  🗑 Clean  |  🚀 Launch  |  ⚡ Live Coding  |  📄 CompileDB
+ *   ▶ Build  |  🗑 Clean  |  🚀 Launch  |  📄 CompileDB
  *
  * Build icon changes during build (spinner) and after failure (red error icon).
  */
@@ -46,9 +46,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           break;
         case 'launch':
           vscode.commands.executeCommand(Commands.LaunchEditor);
-          break;
-        case 'liveCoding':
-          vscode.commands.executeCommand(Commands.LiveCoding);
           break;
         case 'compileDb':
           vscode.commands.executeCommand(Commands.GenerateCompileCommands);
@@ -179,7 +176,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   <div class="separator"></div>
 
   <button class="icon-btn" id="btn-launch" title="Launch Editor" onclick="send('launch')">&#128640;</button>
-  <button class="icon-btn" id="btn-livecoding" title="Live Coding" onclick="send('liveCoding')">&#9889;</button>
 
   <div class="separator"></div>
 

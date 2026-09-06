@@ -30,16 +30,30 @@ const mcpServerOptions = {
   minify: isProduction,
 };
 
+/** @type {import('esbuild').BuildOptions} */
+const cliOptions = {
+  entryPoints: ['src/cli.ts'],
+  bundle: true,
+  outfile: 'dist/cli.js',
+  format: 'cjs',
+  platform: 'node',
+  target: 'node18',
+  sourcemap: !isProduction,
+  minify: isProduction,
+};
+
 async function main() {
   if (isWatch) {
     const ctx1 = await esbuild.context(buildOptions);
     const ctx2 = await esbuild.context(mcpServerOptions);
-    await Promise.all([ctx1.watch(), ctx2.watch()]);
+    const ctx3 = await esbuild.context(cliOptions);
+    await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch()]);
     console.log('[EngineLink] Watching for changes...');
   } else {
     await Promise.all([
       esbuild.build(buildOptions),
       esbuild.build(mcpServerOptions),
+      esbuild.build(cliOptions),
     ]);
     console.log('[EngineLink] Build complete.');
   }

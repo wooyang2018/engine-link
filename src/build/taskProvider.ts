@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { buildCommandLine, cleanCommandLine, generateClangDatabaseCommandLine, formatCommandLine } from './ubt';
+import { buildCommandLine, cleanCommandLine, generateClangDatabaseCommandLine } from './ubt';
 import { EXTENSION_ID } from '../constants';
 import type { EngineLinkContext, EngineLinkTaskDefinition, BuildConfiguration, BuildTargetType, BuildPlatform } from '../types';
 import { EngineLinkSettings } from '../config/settings';

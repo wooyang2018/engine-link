@@ -1,6 +1,8 @@
+import * as fs from 'fs';
 import * as path from 'path';
 import { spawnAsync } from '../platform/process';
 import { fileExists } from '../platform/paths';
+import { readRegistryValue } from '../platform/registry';
 import type { VSBuildTools } from '../types';
 
 const VSWHERE_PATH =
@@ -73,7 +75,21 @@ async function validateBuildToolsAt(installPath: string): Promise<VSBuildTools |
  * Check if Windows SDK components are available.
  */
 async function checkWindowsSDK(installPath: string): Promise<boolean> {
-  // Check via vswhere for Windows SDK component
+  // SDK component IDs are versioned and change over time. Prefer the installed
+  // Windows Kits layout, then fall back to the historically common VS component.
+  const programFilesX86 = process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)';
+  const sdkBin = path.join(programFilesX86, 'Windows Kits', '10', 'bin');
+  try {
+    const versions = await fs.promises.readdir(sdkBin, { withFileTypes: true });
+    if (versions.some((entry) => entry.isDirectory())) return true;
+  } catch {
+    // Continue with registry/vswhere for non-standard installations.
+  }
+  const registeredRoot = await readRegistryValue(
+    'HKLM\\SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots',
+    'KitsRoot10',
+  );
+  if (registeredRoot && await fileExists(path.join(registeredRoot, 'bin'))) return true;
   try {
     const result = await spawnAsync(VSWHERE_PATH, [
       '-path',

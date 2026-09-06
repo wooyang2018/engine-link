@@ -1,6 +1,10 @@
 import { spawn } from 'child_process';
-import type { CancellationToken } from 'vscode';
 import type { SpawnResult } from '../types';
+
+/** Minimal cancellation contract shared by VS Code and standalone callers. */
+export interface ProcessCancellationToken {
+  onCancellationRequested(listener: () => void): { dispose(): void };
+}
 
 /**
  * Check if UnrealEditor.exe is currently running via tasklist.
@@ -31,7 +35,7 @@ export function spawnAsync(
     env?: NodeJS.ProcessEnv;
     onStdout?: (line: string) => void;
     onStderr?: (line: string) => void;
-    token?: CancellationToken;
+    token?: ProcessCancellationToken;
     shell?: boolean;
   },
 ): Promise<SpawnResult> {

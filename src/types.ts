@@ -80,7 +80,6 @@ export interface UEVersionProfile {
   ubtRelativePath: string;
   editorRelativePath: string;
   supportsGenerateClangDatabase: boolean;
-  supportsLiveCoding: boolean;
   compileCommandsOutputPattern: string;
 }
 

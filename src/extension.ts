@@ -63,7 +63,7 @@ export async function activate(extensionContext: vscode.ExtensionContext) {
   // Run detection pipeline (auto compile_commands only on this first pass — see runDetectionPipeline)
   await runDetectionPipeline({ allowAutoCompileDb: true });
 
-  // Start MCP server
+  // Register the standalone MCP server. The client launches it on demand.
   await startMcpServer(extensionContext.extensionPath, context, settings);
 
   // Watch for project changes
@@ -226,28 +226,23 @@ function registerCommands(extensionContext: vscode.ExtensionContext) {
   };
 
   register(Commands.Build, async () => {
-    const { executeBuild } = await import('./commands/buildCommands');
-    await executeBuild(context, settings);
+    const { executeCoreBuild } = await import('./commands/coreCommands');
+    await executeCoreBuild(context, settings);
   });
 
   register(Commands.Clean, async () => {
-    const { executeClean } = await import('./commands/buildCommands');
-    await executeClean(context, settings);
+    const { executeCoreClean } = await import('./commands/coreCommands');
+    await executeCoreClean(context, settings);
   });
 
   register(Commands.LaunchEditor, async () => {
-    const { launchEditor } = await import('./commands/launchCommands');
-    await launchEditor(context);
-  });
-
-  register(Commands.LiveCoding, async () => {
-    const { triggerLiveCoding } = await import('./commands/liveCodingCommand');
-    await triggerLiveCoding(context, settings);
+    const { executeCoreLaunch } = await import('./commands/coreCommands');
+    await executeCoreLaunch(context);
   });
 
   register(Commands.GenerateCompileCommands, async () => {
-    const { generateCompileCommands } = await import('./commands/generateCommands');
-    await generateCompileCommands(context, settings);
+    const { executeCoreCompileCommands } = await import('./commands/coreCommands');
+    await executeCoreCompileCommands(context, settings);
   });
 
   register(Commands.SelectEngine, async () => {
@@ -313,4 +308,3 @@ export function getSettings(): EngineLinkSettings {
 export function getStatusBar(): StatusBarManager {
   return statusBar;
 }
-

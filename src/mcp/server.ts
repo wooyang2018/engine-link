@@ -1,247 +1,93 @@
-/**
- * EngineLink MCP Server — standalone process.
- *
- * This runs as a child process spawned by the extension.
- * It exposes build tools and project state to Cursor's AI agent via MCP protocol.
- *
- * Communication:
- * - MCP protocol (JSON-RPC) over stdin/stdout for Cursor AI interaction
- * - IPC messages (prefixed) from the extension host for state updates
- *
- * Note: This is a simplified MCP server implementation.
- * It reads JSON-RPC messages from stdin and writes responses to stdout.
- */
-
+#!/usr/bin/env node
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { EngineLinkService } from '../core/service';
 import { TOOL_DEFINITIONS } from './tools';
-import type { IPCStateUpdate, IPCBuildResponse, IPCGenericResponse } from './protocol';
 
-// Server state (populated via IPC from extension host)
-let state: IPCStateUpdate | null = null;
+const projectPath = getOption('--project') ?? process.env.ENGINELINK_PROJECT ?? process.cwd();
+const service = new EngineLinkService(projectPath);
+const server = new Server(
+  { name: 'enginelink', version: '0.2.0' },
+  { capabilities: { tools: {} } },
+);
 
-// Pending IPC callbacks
-const pendingCallbacks = new Map<string, (response: IPCBuildResponse | IPCGenericResponse) => void>();
-
-// Read stdin line by line
-let inputBuffer = '';
-process.stdin.setEncoding('utf-8');
-process.stdin.on('data', (chunk: string) => {
-  inputBuffer += chunk;
-  const lines = inputBuffer.split('\n');
-  inputBuffer = lines.pop() ?? '';
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    handleInput(trimmed);
+server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [...TOOL_DEFINITIONS] }));
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  try {
+    const args = (request.params.arguments ?? {}) as Record<string, unknown>;
+    const result = await dispatch(request.params.name, args);
+    const operationFailed = isFailedRun(result);
+    return {
+      ...(operationFailed ? { isError: true } : {}),
+      content: [{ type: 'text' as const, text: typeof result === 'string' ? result : JSON.stringify(result, null, 2) }],
+      structuredContent: toObject(result),
+    };
+  } catch (error) {
+    return {
+      isError: true,
+      content: [{ type: 'text' as const, text: error instanceof Error ? error.message : String(error) }],
+    };
   }
 });
 
-function handleInput(line: string) {
-  try {
-    const msg = JSON.parse(line);
-
-    // IPC messages from extension host
-    if (msg.type?.startsWith('ipc:')) {
-      handleIPC(msg);
-      return;
-    }
-
-    // MCP JSON-RPC messages from Cursor
-    if (msg.jsonrpc === '2.0') {
-      handleMCPMessage(msg);
-      return;
-    }
-  } catch {
-    // Ignore unparseable lines
-  }
-}
-
-function handleIPC(msg: IPCStateUpdate | IPCBuildResponse | IPCGenericResponse) {
-  if (msg.type === 'ipc:stateUpdate') {
-    state = msg as IPCStateUpdate;
-    return;
-  }
-
-  if (msg.type === 'ipc:buildResponse' || msg.type === 'ipc:genericResponse') {
-    const callback = pendingCallbacks.get(msg.type);
-    if (callback) {
-      callback(msg as IPCBuildResponse | IPCGenericResponse);
-      pendingCallbacks.delete(msg.type);
-    }
-    return;
-  }
-}
-
-function handleMCPMessage(msg: { id?: number | string; method: string; params?: unknown }) {
-  switch (msg.method) {
-    case 'initialize':
-      respond(msg.id, {
-        protocolVersion: '2024-11-05',
-        capabilities: { tools: {} },
-        serverInfo: { name: 'enginelink', version: '0.1.0' },
-      });
-      break;
-
-    case 'notifications/initialized':
-      // No response needed for notifications
-      break;
-
-    case 'tools/list':
-      respond(msg.id, { tools: TOOL_DEFINITIONS });
-      break;
-
-    case 'tools/call':
-      handleToolCall(msg.id, msg.params as { name: string; arguments?: Record<string, unknown> });
-      break;
-
-    default:
-      respondError(msg.id, -32601, `Method not found: ${msg.method}`);
-  }
-}
-
-async function handleToolCall(
-  id: number | string | undefined,
-  params: { name: string; arguments?: Record<string, unknown> },
-) {
-  const { name, arguments: args } = params;
-
+async function dispatch(name: string, args: Record<string, unknown>): Promise<unknown> {
+  const context = { taskId: stringArg(args, 'taskId'), reason: stringArg(args, 'reason') };
+  const build = {
+    ...context,
+    configuration: stringArg(args, 'configuration') as 'Debug' | 'DebugGame' | 'Development' | 'Shipping' | 'Test' | undefined,
+    targetType: stringArg(args, 'targetType') as 'Editor' | 'Game' | 'Client' | 'Server' | undefined,
+    platform: stringArg(args, 'platform') as 'Win64' | 'Linux' | 'Mac' | undefined,
+  };
   switch (name) {
-    case 'enginelink_get_project_info': {
-      if (!state || !state.project) {
-        respond(id, {
-          content: [{ type: 'text', text: 'No Unreal Engine project is currently detected.' }],
-        });
-        return;
-      }
-
-      const info = {
-        project: state.project,
-        engine: state.engine,
-        buildTools: state.buildTools,
-        config: state.config,
-        lastBuild: state.lastBuildResult,
-      };
-
-      respond(id, {
-        content: [{ type: 'text', text: JSON.stringify(info, null, 2) }],
-      });
-      break;
-    }
-
-    case 'enginelink_get_build_errors': {
-      if (!state) {
-        respond(id, {
-          content: [{ type: 'text', text: 'EngineLink is not initialized.' }],
-        });
-        return;
-      }
-
-      if (state.lastBuildErrors.length === 0) {
-        respond(id, {
-          content: [{ type: 'text', text: 'No build errors. The last build succeeded or no build has been run yet.' }],
-        });
-        return;
-      }
-
-      const errorText = state.lastBuildErrors
-        .map((e) => `${e.file}(${e.line},${e.column}): ${e.severity} ${e.code}: ${e.message}`)
-        .join('\n');
-
-      respond(id, {
-        content: [{ type: 'text', text: errorText }],
-      });
-      break;
-    }
-
-    case 'enginelink_build':
-    case 'enginelink_clean': {
-      const action = name.replace('enginelink_', '') as 'build' | 'clean';
-      sendToExtension({
-        type: 'ipc:buildRequest',
-        action,
-        configuration: args?.configuration as string | undefined,
-        targetType: args?.targetType as string | undefined,
-      });
-
-      // Wait for response from extension (with timeout)
-      const buildResult = await waitForResponse<IPCBuildResponse>('ipc:buildResponse', 300000);
-
-      if (buildResult) {
-        const text = buildResult.success
-          ? `Build succeeded in ${(buildResult.duration / 1000).toFixed(1)}s (${buildResult.warnings} warnings)`
-          : `Build failed in ${(buildResult.duration / 1000).toFixed(1)}s with ${buildResult.errors} error(s):\n${buildResult.errorMessages.join('\n')}`;
-
-        respond(id, { content: [{ type: 'text', text }] });
-      } else {
-        respond(id, {
-          content: [{ type: 'text', text: 'Build timed out or failed to communicate with extension.' }],
-        });
-      }
-      break;
-    }
-
-    case 'enginelink_launch_editor': {
-      sendToExtension({ type: 'ipc:launchRequest' });
-      const result = await waitForResponse<IPCGenericResponse>('ipc:genericResponse', 10000);
-      respond(id, {
-        content: [{ type: 'text', text: result?.message ?? 'Launch request sent.' }],
-      });
-      break;
-    }
-
-    case 'enginelink_live_coding': {
-      sendToExtension({ type: 'ipc:liveCodingRequest' });
-      const result = await waitForResponse<IPCGenericResponse>('ipc:genericResponse', 10000);
-      respond(id, {
-        content: [{ type: 'text', text: result?.message ?? 'Live Coding request sent.' }],
-      });
-      break;
-    }
-
-    case 'enginelink_generate_compile_commands': {
-      sendToExtension({ type: 'ipc:generateCompileCommandsRequest' });
-      const result = await waitForResponse<IPCGenericResponse>('ipc:genericResponse', 300000);
-      respond(id, {
-        content: [{ type: 'text', text: result?.message ?? 'Generate request sent.' }],
-      });
-      break;
-    }
-
-    default:
-      respondError(id, -32602, `Unknown tool: ${name}`);
+    case 'enginelink_get_environment': return service.getEnvironment();
+    case 'enginelink_doctor': return service.doctor();
+    case 'enginelink_build': return service.build(build);
+    case 'enginelink_clean': return service.clean({ ...build, confirm: args.confirm === true });
+    case 'enginelink_get_build_diagnostics': return service.getBuildDiagnostics();
+    case 'enginelink_generate_compile_commands': return service.generateCompileCommands(build);
+    case 'enginelink_get_editor_process': return service.getEditorProcess();
+    case 'enginelink_launch_editor': return service.launchEditor(context);
+    case 'enginelink_run_acceptance': return service.runAcceptance({
+      ...context,
+      tier: requiredString(args, 'tier'),
+      evidenceNotes: stringArg(args, 'evidenceNotes'),
+    });
+    case 'enginelink_get_run': return service.getRun(requiredString(args, 'runId'));
+    default: throw new Error(`Unknown EngineLink tool: ${name}`);
   }
 }
 
-function respond(id: number | string | undefined, result: unknown) {
-  if (id === undefined) return;
-  const msg = JSON.stringify({ jsonrpc: '2.0', id, result });
-  process.stdout.write(msg + '\n');
+function getOption(name: string): string | undefined {
+  const index = process.argv.indexOf(name);
+  return index >= 0 ? process.argv[index + 1] : undefined;
 }
 
-function respondError(id: number | string | undefined, code: number, message: string) {
-  if (id === undefined) return;
-  const msg = JSON.stringify({ jsonrpc: '2.0', id, error: { code, message } });
-  process.stdout.write(msg + '\n');
+function stringArg(args: Record<string, unknown>, name: string): string | undefined {
+  return typeof args[name] === 'string' ? args[name] as string : undefined;
 }
 
-function sendToExtension(msg: Record<string, unknown>) {
-  // Write to stderr so it doesn't interfere with MCP stdout
-  process.stderr.write(JSON.stringify(msg) + '\n');
+function requiredString(args: Record<string, unknown>, name: string): string {
+  const value = stringArg(args, name);
+  if (!value) throw new Error(`Missing required argument: ${name}`);
+  return value;
 }
 
-function waitForResponse<T>(type: string, timeoutMs: number): Promise<T | null> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      pendingCallbacks.delete(type);
-      resolve(null);
-    }, timeoutMs);
-
-    pendingCallbacks.set(type, (response) => {
-      clearTimeout(timer);
-      resolve(response as T);
-    });
-  });
+function toObject(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
-// Indicate server is ready
-sendToExtension({ type: 'ipc:ready' });
+function isFailedRun(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as { schema?: unknown; success?: unknown };
+  return candidate.schema === 'enginelink.run.v1' && candidate.success === false;
+}
+
+async function main(): Promise<void> {
+  await server.connect(new StdioServerTransport());
+}
+
+main().catch((error) => {
+  process.stderr.write(`EngineLink MCP: ${error instanceof Error ? error.message : String(error)}\n`);
+  process.exitCode = 1;
+});

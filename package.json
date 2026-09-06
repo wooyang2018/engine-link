@@ -1,8 +1,8 @@
 {
   "name": "enginelink",
   "displayName": "EngineLink",
-  "description": "Cursor-first Unreal Engine build bridge — build, launch, and live-code UE projects with AI-powered tooling",
-  "version": "0.1.5",
+  "description": "Host-side Unreal Engine build, toolchain, process, diagnostics, and acceptance bridge for humans and AI agents",
+  "version": "0.2.0",
   "publisher": "enginelink",
   "license": "MIT",
   "repository": {
@@ -27,11 +27,13 @@
     "game development",
     "c++",
     "build",
-    "cursor",
-    "live coding"
+    "cursor"
   ],
   "icon": "media/icon.png",
   "main": "./dist/extension.js",
+  "bin": {
+    "enginelink": "./dist/cli.js"
+  },
   "activationEvents": [
     "workspaceContains:**/*.uproject"
   ],
@@ -54,12 +56,6 @@
         "title": "Launch Unreal Editor",
         "category": "EngineLink",
         "icon": "$(rocket)"
-      },
-      {
-        "command": "enginelink.liveCoding",
-        "title": "Live Coding Compile",
-        "category": "EngineLink",
-        "icon": "$(zap)"
       },
       {
         "command": "enginelink.generateCompileCommands",
@@ -143,16 +139,6 @@
           "type": "boolean",
           "default": true,
           "description": "Create or update project .clangd to suppress MSVC/clangd builtin_definition false positives (clangd + UE on Windows).",
-          "scope": "resource"
-        },
-        "enginelink.liveCoding.method": {
-          "type": "string",
-          "default": "keystroke",
-          "enum": [
-            "keystroke",
-            "disabled"
-          ],
-          "description": "Method to trigger Live Coding. 'keystroke' simulates Ctrl+Alt+F11.",
           "scope": "resource"
         },
         "enginelink.vsBuildTools.path": {
@@ -257,11 +243,6 @@
           "command": "enginelink.launchEditor",
           "group": "navigation@2",
           "when": "enginelink.projectDetected"
-        },
-        {
-          "command": "enginelink.liveCoding",
-          "group": "navigation@3",
-          "when": "enginelink.projectDetected"
         }
       ],
       "editor/title": [
@@ -292,18 +273,13 @@
         "command": "enginelink.build",
         "key": "ctrl+shift+b",
         "when": "enginelink.projectDetected"
-      },
-      {
-        "command": "enginelink.liveCoding",
-        "key": "ctrl+alt+f11",
-        "when": "enginelink.projectDetected"
       }
     ]
   },
   "scripts": {
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
-    "lint": "eslint src/",
+    "lint": "eslint \"src/**/*.ts\"",
     "format": "prettier --write src/",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

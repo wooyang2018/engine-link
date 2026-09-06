@@ -6,7 +6,6 @@ export const Commands = {
   Build: `${EXTENSION_ID}.build`,
   Clean: `${EXTENSION_ID}.clean`,
   LaunchEditor: `${EXTENSION_ID}.launchEditor`,
-  LiveCoding: `${EXTENSION_ID}.liveCoding`,
   GenerateCompileCommands: `${EXTENSION_ID}.generateCompileCommands`,
   SelectEngine: `${EXTENSION_ID}.selectEngine`,
   SelectProject: `${EXTENSION_ID}.selectProject`,
@@ -23,7 +22,6 @@ export const Config = {
   Platform: `${EXTENSION_ID}.platform`,
   AutoGenerateCompileCommands: `${EXTENSION_ID}.autoGenerateCompileCommands`,
   UpsertClangdConfig: `${EXTENSION_ID}.upsertClangdConfig`,
-  LiveCodingMethod: `${EXTENSION_ID}.liveCoding.method`,
   VSBuildToolsPath: `${EXTENSION_ID}.vsBuildTools.path`,
   StatusBarShowContextInfo: `${EXTENSION_ID}.statusBar.showContextInfo`,
 } as const;
@@ -43,7 +41,6 @@ export const UE_PROFILES = {
     ubtRelativePath: 'Engine/Binaries/DotNET/UnrealBuildTool/UnrealBuildTool.exe',
     editorRelativePath: 'Engine/Binaries/Win64/UnrealEditor.exe',
     supportsGenerateClangDatabase: true,
-    supportsLiveCoding: true,
     compileCommandsOutputPattern: '**/compile_commands.json',
   },
 } as const;
