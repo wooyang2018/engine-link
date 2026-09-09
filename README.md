@@ -112,7 +112,7 @@ UBT's normal Editor build often compiles many `.cpp` files through auto-generate
 2. After generation (and after successful builds when `enginelink.autoGenerateCompileCommands` is enabled), EngineLink **post-processes** `compile_commands.json`:
    - Inlines `@*.rsp` into clangd-friendly `arguments` arrays
    - Remaps broken per-file entries via `Module.*.cpp` when merged builds are in use
-   - Adds matching `.h` entries so opening headers gets a compilation unit
+   - Adds matching `.h` entries so opening headers gets a compilation unit (UE `Private/Foo.cpp` → `Public/Foo.h`; project `.h` entries are always re-derived from `.cpp`, not kept from input)
 3. On activation, if the database looks stale (many missing `.rsp` files), EngineLink post-processes it and regenerates when entries are still broken.
 
 EngineLink also upserts `.vscode/settings.json` in the UE project folder so `clangd` and C/C++ use `${workspaceFolder}/compile_commands.json` in multi-root workspaces.

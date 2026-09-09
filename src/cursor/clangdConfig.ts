@@ -23,7 +23,14 @@ function formatTemplateFlags(flags: string[]): string[] {
 
   for (let i = 0; i < flags.length && lines.length < maxFlags; i++) {
     const flag = flags[i];
-    if (flag.startsWith('/Fo') || flag.startsWith('/fp') || flag.startsWith('/Fp')) {
+    if (
+      flag.startsWith('/Fo') ||
+      flag.startsWith('/fp') ||
+      flag.startsWith('/Fp') ||
+      flag.endsWith('.cpp') ||
+      flag.endsWith('.c') ||
+      flag.endsWith('clang-cl.exe')
+    ) {
       continue;
     }
 
@@ -48,10 +55,14 @@ function managedBlock(options: ClangdConfigOptions = {}): string {
     CLANGD_MANAGED_BEGIN,
     '# MSVC intrinsics vs Clang builtins when parsing with clangd (IDE-only; real UE builds still use MSVC).',
     'Diagnostics:',
-    '  Suppress: builtin_definition',
-    'CompileFlags:',
-    '  Add:',
-    '    - --query-driver=**/clang-cl.exe',
+    '  Suppress:',
+    '    - builtin_definition',
+    '    - member_function_call_bad_type',
+    '    - user_defined_literal',
+    '    - err_ovl_no_viable_member_function_in_call',
+    '    - err_member_function_call_bad_type',
+    '    - static_assert_requirement_failed',
+    '    - unknown_typename',
   ];
 
   if (options.engineRoot && options.templateFlags && options.templateFlags.length > 0) {

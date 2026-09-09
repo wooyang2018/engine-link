@@ -9,7 +9,8 @@ function managedSettingsBlock(): string {
     VSCODE_SETTINGS_MANAGED_BEGIN,
     '"C_Cpp.default.compileCommands": "${workspaceFolder}/compile_commands.json",',
     '"clangd.arguments": [',
-    '  "--compile-commands-dir=${workspaceFolder}"',
+    '  "--compile-commands-dir=${workspaceFolder}",',
+    '  "--query-driver=**/clang-cl.exe"',
     ']',
     VSCODE_SETTINGS_MANAGED_END,
   ].join('\n  ');
@@ -42,13 +43,19 @@ export async function ensureVscodeSettings(projectRoot: string): Promise<boolean
   const endIdx = content.indexOf(VSCODE_SETTINGS_MANAGED_END);
 
   if (beginIdx !== -1 && endIdx !== -1 && endIdx > beginIdx) {
-    const before = content.slice(0, beginIdx).replace(/[,\s]+$/, '');
+    const before = content.slice(0, beginIdx).replace(/[,\s]+$/, '').trim();
     const afterEnd = endIdx + VSCODE_SETTINGS_MANAGED_END.length;
-    const after = content.slice(afterEnd).replace(/^[\s,]+/, '');
-    const inner = [before ? `${before.trimEnd()},` : '', block, after ? `,${after.trim()}` : '']
-      .filter((part) => part.length > 0)
-      .join('\n  ');
-    const newContent = wrapManagedBlock(inner);
+    const after = content.slice(afterEnd).replace(/^[\s,]+/, '').trim();
+    const beforeIsObjectOpen = before === '{';
+    const outerParts: string[] = [];
+    if (before && !beforeIsObjectOpen) {
+      outerParts.push(before.endsWith(',') ? before : `${before},`);
+    }
+    outerParts.push(block);
+    if (after && after !== '}') {
+      outerParts.push(after.startsWith(',') ? after.slice(1).trim() : after);
+    }
+    const newContent = wrapManagedBlock(outerParts.join('\n  '));
     if (newContent === content) {
       return false;
     }
