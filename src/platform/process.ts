@@ -1,7 +1,7 @@
 import { spawn } from 'child_process';
 import type { SpawnResult } from '../types';
 
-/** Minimal cancellation contract shared by VS Code and standalone callers. */
+/** Minimal cancellation contract shared by the Cursor extension and standalone callers. */
 export interface ProcessCancellationToken {
   onCancellationRequested(listener: () => void): { dispose(): void };
 }

@@ -3,7 +3,7 @@ import { EXTENSION_ID } from '../constants';
 import type { BuildConfiguration, BuildTargetType, BuildPlatform } from '../types';
 
 /**
- * Typed wrapper around VS Code workspace settings for EngineLink.
+ * Typed wrapper around Cursor workspace settings for EngineLink.
  */
 export class EngineLinkSettings {
   private get config() {

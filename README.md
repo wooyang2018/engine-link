@@ -157,9 +157,9 @@ If auto-detection fails, override paths in [Configuration](#configuration).
 
 ### AI Integration
 
-- **Independent MCP server** — runs without VS Code and exposes only host-side EngineLink operations
+- **Independent MCP server** — runs without the Cursor extension and exposes only host-side EngineLink operations
 - **CLI** — exposes the same core operations to humans and CI
-- **Multi-client snippets** — generates separate EngineLink and Unreal MCP entries for Codex, Cursor, and Claude Code
+- **Project MCP registration** — registers EngineLink for Cursor, Codex, and Claude Code when the extension activates
 - **Cursor rules** — generates `.cursor/rules/*.mdc` files so the AI writes idiomatic Unreal C++
 
 ### Editor UX
@@ -208,13 +208,17 @@ All settings live under `enginelink.*` in your workspace or user `settings.json`
 
 ## MCP Server (AI Agent Tools)
 
-EngineLink ships a standalone stdio MCP server. The MCP client launches it directly; the VS Code extension neither pre-spawns it nor proxies Unreal MCP. Point it at a project with `node dist/mcp-server.js --project <project-root>`.
+EngineLink ships a standalone stdio MCP server. The MCP client launches it directly; the extension never pre-spawns it or proxies Unreal MCP. Point it at a project with `node dist/mcp-server.js --project <project-root>`.
 
-When the extension activates inside an Unreal project, it registers EngineLink in both the project `.cursor/mcp.json` and the project-local Codex `.codex/config.toml`. The Codex file is TOML rather than JSON; existing MCP sections are preserved and the `mcp_servers.enginelink` section is updated idempotently. For direct installation from the EngineLink repository, pass the target project explicitly:
+When the Cursor extension activates inside an Unreal project, it registers EngineLink in the three supported project-level client configurations:
 
-```powershell
-.\Scripts\Install-EngineLink.ps1 -CodexProjectRoot D:\Workspace\ue-gas-learn
-```
+| Client | Project configuration |
+|---|---|
+| Cursor | `.cursor/mcp.json` |
+| Codex | `.codex/config.toml` |
+| Claude Code | `.mcp.json` |
+
+Registration is idempotent and preserves unrelated MCP servers. Cursor and Claude Code use JSON `mcpServers`; Codex uses TOML `mcp_servers`. The extension owns registration, while each client owns launching the standalone stdio process.
 
 | Tool | Description |
 |---|---|
@@ -237,10 +241,7 @@ Live Coding is deliberately not an EngineLink MCP tool. Agents should call Unrea
 node dist/cli.js doctor --project D:/Workspace/MyGame
 node dist/cli.js build --project D:/Workspace/MyGame --reason "verify C++ change"
 node dist/cli.js accept --project D:/Workspace/MyGame --tier L2
-node dist/cli.js configure --project D:/Workspace/MyGame --clients all --mode both
 ```
-
-Generated snippets are written under `.enginelink/generated/`. They keep `enginelink` (stdio) and `unreal` (HTTP) as two peer servers; copy or merge the desired snippet into the client's normal configuration.
 
 ---
 
@@ -309,21 +310,19 @@ src/
 ├── types.ts                      # Shared TypeScript interfaces
 ├── build/
 │   ├── ubt.ts                    # UBT command-line construction
-│   └── taskProvider.ts           # VS Code task provider
+│   └── taskProvider.ts           # Cursor task provider
 ├── core/
 │   ├── config.ts                 # .enginelink/project.json discovery
-│   ├── discovery.ts              # VS Code-independent project/engine resolution
+│   ├── discovery.ts              # IDE-independent project/engine resolution
 │   ├── service.ts                # Shared host-side operations
 │   ├── runStore.ts               # Saved/EngineLink/Runs records
-│   └── clientConfig.ts           # Codex/Cursor/Claude snippets
 ├── commands/
-│   ├── coreCommands.ts           # VS Code adapter over shared core
+│   ├── coreCommands.ts           # Cursor adapter over shared core
 │   ├── launchCommands.ts         # Legacy Editor launch helper
 │   └── generateCommands.ts       # compile_commands.json generation
 ├── config/
 │   └── settings.ts               # Typed settings accessor
 ├── cursor/
-│   ├── mcpServer.ts              # Cursor registration for standalone MCP
 │   ├── rulesGenerator.ts         # .cursor/rules/*.mdc generation
 │   └── clangdConfig.ts           # .clangd managed block upsert
 ├── detection/
@@ -331,6 +330,7 @@ src/
 │   ├── engineDiscovery.ts        # Engine discovery (registry + filesystem)
 │   └── buildToolsDetector.ts     # VS Build Tools detection via vswhere
 ├── mcp/
+│   ├── clientRegistration.ts     # Cursor/Codex/Claude project registration
 │   ├── server.ts                 # Standalone MCP server process
 │   └── tools.ts                  # Host-only MCP contracts
 ├── parsers/

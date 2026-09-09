@@ -1,7 +1,4 @@
 #!/usr/bin/env node
-import * as path from 'path';
-import { generateClientConfigs, registerCodexMcp, type ClientMode, type ClientName } from './core/clientConfig';
-import { findProjectRoot } from './core/config';
 import { EngineLinkService } from './core/service';
 
 async function main() {
@@ -26,19 +23,6 @@ async function main() {
     }));
     case 'run': return print(await service.getRun(requiredOption(rest, '--id')));
     case 'explain': process.stdout.write(await service.explainRun(requiredOption(rest, '--id'))); return;
-    case 'configure': {
-      const projectRoot = await findProjectRoot(projectArg);
-      const clients = parseClients(option(rest, '--clients') ?? 'all');
-      const mode = (option(rest, '--mode') ?? 'both') as ClientMode;
-      if (!['both', 'enginelink', 'unreal'].includes(mode)) throw new Error(`Invalid --mode: ${mode}`);
-      const serverPath = path.resolve(option(rest, '--server-path') ?? path.join(__dirname, 'mcp-server.js'));
-      return print(await generateClientConfigs({ projectRoot, serverPath, clients, mode }));
-    }
-    case 'register-codex': {
-      const projectRoot = await findProjectRoot(projectArg);
-      const serverPath = path.resolve(option(rest, '--server-path') ?? path.join(__dirname, 'mcp-server.js'));
-      return print({ path: await registerCodexMcp({ projectRoot, serverPath }) });
-    }
     default:
       process.stdout.write(helpText());
   }
@@ -65,13 +49,6 @@ function requiredOption(args: string[], name: string): string {
 
 function flag(args: string[], name: string): boolean { return args.includes(name); }
 
-function parseClients(value: string): ClientName[] {
-  if (value === 'all') return ['codex', 'cursor', 'claude'];
-  const clients = value.split(',') as ClientName[];
-  if (clients.some((client) => !['codex', 'cursor', 'claude'].includes(client))) throw new Error(`Invalid clients: ${value}`);
-  return clients;
-}
-
 function print(value: unknown): void { process.stdout.write(JSON.stringify(value, null, 2) + '\n'); }
 
 function printOperation(value: { success: boolean }): void {
@@ -80,7 +57,7 @@ function printOperation(value: { success: boolean }): void {
 }
 
 function helpText(): string {
-  return `EngineLink CLI\n\nCommands:\n  environment | doctor | build | clean --confirm | diagnostics\n  compile-commands | editor-process | launch\n  accept --tier L1|L2|L3 [--evidence-notes TEXT]\n  run --id ID | explain --id ID\n  configure --clients all|codex,cursor,claude --mode both|enginelink|unreal\n  register-codex\n\nCommon options:\n  --project PATH --server-path PATH --task-id ID --reason TEXT\n`;
+  return `EngineLink CLI\n\nCommands:\n  environment | doctor | build | clean --confirm | diagnostics\n  compile-commands | editor-process | launch\n  accept --tier L1|L2|L3 [--evidence-notes TEXT]\n  run --id ID | explain --id ID\n\nCommon options:\n  --project PATH --task-id ID --reason TEXT\n`;
 }
 
 main().catch((error) => {

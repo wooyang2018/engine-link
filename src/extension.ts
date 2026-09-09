@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { Commands, ContextKeys, EXTENSION_ID } from './constants';
 import { detectProjects, selectProject, watchForProjectChanges } from './detection/projectDetector';
 import {
@@ -16,7 +17,7 @@ import { createOutputChannel } from './ui/outputChannel';
 import { generateCursorRules } from './cursor/rulesGenerator';
 import { ensureClangdConfig } from './cursor/clangdConfig';
 import { ensureVscodeSettings } from './cursor/vscodeSettings';
-import { startMcpServer, sendStateToMcp, stopMcpServer } from './cursor/mcpServer';
+import { registerProjectMcpServers } from './mcp/clientRegistration';
 import { EngineLinkTaskProvider } from './build/taskProvider';
 import type { EngineLinkContext } from './types';
 
@@ -63,8 +64,17 @@ export async function activate(extensionContext: vscode.ExtensionContext) {
   // Run detection pipeline (auto compile_commands only on this first pass — see runDetectionPipeline)
   await runDetectionPipeline({ allowAutoCompileDb: true });
 
-  // Register the standalone MCP server. The client launches it on demand.
-  await startMcpServer(extensionContext.extensionPath, context, settings);
+  // Register project-scoped MCP configuration. Each client launches the
+  // standalone server on demand; the extension never owns the MCP process.
+  if (context.project) {
+    const mcpConfigs = await registerProjectMcpServers({
+      projectRoot: context.project.projectRoot,
+      serverPath: path.join(extensionContext.extensionPath, 'dist', 'mcp-server.js'),
+    });
+    outputChannel.appendLine(`[EngineLink] MCP registered for Cursor: ${mcpConfigs.cursor}`);
+    outputChannel.appendLine(`[EngineLink] MCP registered for Codex: ${mcpConfigs.codex}`);
+    outputChannel.appendLine(`[EngineLink] MCP registered for Claude Code: ${mcpConfigs.claude}`);
+  }
 
   // Watch for project changes
   extensionContext.subscriptions.push(
@@ -80,10 +90,6 @@ export async function activate(extensionContext: vscode.ExtensionContext) {
   );
 
   outputChannel.appendLine('[EngineLink] Activated successfully.');
-}
-
-export function deactivate() {
-  stopMcpServer();
 }
 
 /**
@@ -213,8 +219,6 @@ async function runDetectionPipeline(options?: { allowAutoCompileDb?: boolean }) 
     await ensureCompileCommandsIntellisense(context, settings, { allowRegenerate: true });
   }
 
-  // Update MCP server state
-  sendStateToMcp(context, settings);
 }
 
 /**
@@ -258,7 +262,6 @@ function registerCommands(extensionContext: vscode.ExtensionContext) {
       context.engine = picked;
       await setContext(ContextKeys.EngineFound, true);
       statusBar.update(context, settings);
-      sendStateToMcp(context, settings);
     }
   });
 

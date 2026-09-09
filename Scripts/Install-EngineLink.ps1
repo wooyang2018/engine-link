@@ -5,13 +5,10 @@
 
 .DESCRIPTION
   Runs npm install (when needed), packages the extension with vsce, and installs
-  the resulting .vsix into Cursor or VS Code.
+  the resulting .vsix into Cursor.
 
 .PARAMETER PackageOnly
   Only build the .vsix; do not install it.
-
-.PARAMETER Editor
-  Target editor CLI: Cursor, Code, or Both. Defaults to Cursor.
 
 .PARAMETER SkipTest
   Skip `npm test` before packaging.
@@ -19,28 +16,18 @@
 .PARAMETER Force
   Pass --force to the editor install command to replace an existing install.
 
-.PARAMETER CodexProjectRoot
-  Optional Unreal project root whose project-local Codex MCP config should be
-  updated after installation. The extension also performs this registration
-  automatically when it activates inside a UE project.
-
 .EXAMPLE
   .\Scripts\Install-EngineLink.ps1
 
 .EXAMPLE
   .\Scripts\Install-EngineLink.ps1 -PackageOnly
 
-.EXAMPLE
-  .\Scripts\Install-EngineLink.ps1 -Editor Code -Force
 #>
 [CmdletBinding()]
 param(
   [switch] $PackageOnly,
-  [ValidateSet('Cursor', 'Code', 'Both')]
-  [string] $Editor = 'Cursor',
   [switch] $SkipTest,
-  [switch] $Force,
-  [string] $CodexProjectRoot = ''
+  [switch] $Force
 )
 
 Set-StrictMode -Version Latest
@@ -55,31 +42,17 @@ function Write-Step {
   Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
-function Resolve-EditorCli {
-  param([string] $Name)
-
-  $command = Get-Command $Name.ToLowerInvariant() -ErrorAction SilentlyContinue
+function Resolve-CursorCli {
+  $command = Get-Command 'cursor' -ErrorAction SilentlyContinue
   if ($command) {
     return $command.Source
   }
 
-  $candidates = switch ($Name) {
-    'Cursor' {
-      @(
-        "$env:LOCALAPPDATA\Programs\cursor\resources\app\bin\cursor.cmd",
-        "$env:LOCALAPPDATA\Programs\Cursor\resources\app\bin\cursor.cmd",
-        'D:\Software\cursor\resources\app\bin\cursor.cmd'
-      )
-    }
-    'Code' {
-      @(
-        "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd",
-        "$env:ProgramFiles\Microsoft VS Code\bin\code.cmd",
-        'D:\Software\Microsoft VS Code\bin\code.cmd'
-      )
-    }
-    default { @() }
-  }
+  $candidates = @(
+    "$env:LOCALAPPDATA\Programs\cursor\resources\app\bin\cursor.cmd",
+    "$env:LOCALAPPDATA\Programs\Cursor\resources\app\bin\cursor.cmd",
+    'D:\Software\cursor\resources\app\bin\cursor.cmd'
+  )
 
   foreach ($candidate in $candidates) {
     if (Test-Path $candidate) {
@@ -87,7 +60,7 @@ function Resolve-EditorCli {
     }
   }
 
-  throw "Could not find the $Name CLI. Install $Name or add its bin directory to PATH."
+  throw 'Could not find the Cursor CLI. Install Cursor or add its bin directory to PATH.'
 }
 
 function Get-LatestVsix {
@@ -136,44 +109,20 @@ if ($PackageOnly) {
   exit 0
 }
 
-$editors = switch ($Editor) {
-  'Both' { @('Cursor', 'Code') }
-  default { @($Editor) }
+$cursorCli = Resolve-CursorCli
+$installArgs = @('--install-extension', $vsixPath)
+if ($Force) {
+  $installArgs += '--force'
 }
 
-foreach ($editorName in $editors) {
-  Write-Step "Installing into $editorName"
-  $cli = Resolve-EditorCli -Name $editorName
-  $installArgs = @('--install-extension', $vsixPath)
-  if ($Force) {
-    $installArgs += '--force'
-  }
-
-  Write-Host "$cli $($installArgs -join ' ')"
-  & $cli @installArgs
-  if ($LASTEXITCODE -ne 0) {
-    throw "$editorName install failed with exit code $LASTEXITCODE"
-  }
-}
-
-if ($CodexProjectRoot) {
-  $resolvedCodexProjectRoot = (Resolve-Path $CodexProjectRoot -ErrorAction Stop).Path
-  if (-not (Get-ChildItem -LiteralPath $resolvedCodexProjectRoot -Filter '*.uproject' -File | Select-Object -First 1)) {
-    throw "CodexProjectRoot does not contain a .uproject file: $resolvedCodexProjectRoot"
-  }
-
-  Write-Step "Registering EngineLink MCP for Codex"
-  $serverPath = Join-Path $repoRoot 'dist\mcp-server.js'
-  node (Join-Path $repoRoot 'dist\cli.js') register-codex --project $resolvedCodexProjectRoot --server-path $serverPath
-  if ($LASTEXITCODE -ne 0) {
-    throw "Codex MCP registration failed with exit code $LASTEXITCODE"
-  }
-  Write-Host "Codex project config updated: $(Join-Path $resolvedCodexProjectRoot '.codex\config.toml')" -ForegroundColor Green
+Write-Step 'Installing into Cursor'
+Write-Host "$cursorCli $($installArgs -join ' ')"
+& $cursorCli @installArgs
+if ($LASTEXITCODE -ne 0) {
+  throw "Cursor install failed with exit code $LASTEXITCODE"
 }
 
 Write-Host ""
 Write-Host "Done. Reload the editor window to activate the new extension." -ForegroundColor Green
 Write-Host "Cursor: Developer: Reload Window" -ForegroundColor DarkGray
-if (-not $CodexProjectRoot) {
-  Write-Host "Codex: pass -CodexProjectRoot <UE project root> for immediate project-level MCP registration." -ForegroundColor DarkGray
-}
+Write-Host "MCP: Cursor, Codex, and Claude Code are registered when the extension activates in an Unreal project." -ForegroundColor DarkGray

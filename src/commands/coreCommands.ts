@@ -4,13 +4,13 @@ import type { RunRecord } from '../core/runStore';
 import type { EngineLinkContext, ParsedDiagnostic } from '../types';
 import type { EngineLinkSettings } from '../config/settings';
 
-/** VS Code presentation adapter over the same core used by CLI and MCP. */
+/** Cursor presentation adapter over the same core used by CLI and MCP. */
 export async function executeCoreBuild(ctx: EngineLinkContext, settings: EngineLinkSettings): Promise<void> {
   await runWithProgress(ctx, 'Cold build', async (service) => service.build({
     configuration: settings.buildConfiguration,
     targetType: settings.buildTarget,
     platform: settings.platform,
-    reason: 'VS Code Build command',
+    reason: 'Cursor Build command',
   }));
 }
 
@@ -26,7 +26,7 @@ export async function executeCoreClean(ctx: EngineLinkContext, settings: EngineL
     targetType: settings.buildTarget,
     platform: settings.platform,
     confirm: true,
-    reason: 'VS Code Clean command',
+    reason: 'Cursor Clean command',
   }));
 }
 
@@ -34,14 +34,14 @@ export async function executeCoreCompileCommands(ctx: EngineLinkContext, setting
   await runWithProgress(ctx, 'Generate compile_commands.json', async (service) => service.generateCompileCommands({
     configuration: settings.buildConfiguration,
     platform: settings.platform,
-    reason: 'VS Code Generate compile_commands command',
+    reason: 'Cursor Generate compile_commands command',
   }));
 }
 
 export async function executeCoreLaunch(ctx: EngineLinkContext): Promise<void> {
   if (!ctx.project) return showError('No Unreal project is selected.');
   try {
-    const result = await new EngineLinkService(ctx.project.projectRoot).launchEditor({ reason: 'VS Code Launch command' });
+    const result = await new EngineLinkService(ctx.project.projectRoot).launchEditor({ reason: 'Cursor Launch command' });
     const message = result.existing ? `Editor is already running (PID ${result.process && typeof result.process === 'object' ? (result.process as { pid?: number }).pid : 'unknown'}).` : `Editor launched (PID ${result.pid ?? 'pending'}).`;
     vscode.window.showInformationMessage(`EngineLink: ${message}`);
   } catch (error) {
