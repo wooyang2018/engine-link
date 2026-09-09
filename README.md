@@ -210,6 +210,12 @@ All settings live under `enginelink.*` in your workspace or user `settings.json`
 
 EngineLink ships a standalone stdio MCP server. The MCP client launches it directly; the VS Code extension neither pre-spawns it nor proxies Unreal MCP. Point it at a project with `node dist/mcp-server.js --project <project-root>`.
 
+When the extension activates inside an Unreal project, it registers EngineLink in both the project `.cursor/mcp.json` and the project-local Codex `.codex/config.toml`. The Codex file is TOML rather than JSON; existing MCP sections are preserved and the `mcp_servers.enginelink` section is updated idempotently. For direct installation from the EngineLink repository, pass the target project explicitly:
+
+```powershell
+.\Scripts\Install-EngineLink.ps1 -CodexProjectRoot D:\Workspace\ue-gas-learn
+```
+
 | Tool | Description |
 |---|---|
 | `enginelink_get_environment` | Project, engine, toolchain, and build defaults |

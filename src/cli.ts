@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import * as path from 'path';
-import { generateClientConfigs, type ClientMode, type ClientName } from './core/clientConfig';
+import { generateClientConfigs, registerCodexMcp, type ClientMode, type ClientName } from './core/clientConfig';
 import { findProjectRoot } from './core/config';
 import { EngineLinkService } from './core/service';
 
@@ -33,6 +33,11 @@ async function main() {
       if (!['both', 'enginelink', 'unreal'].includes(mode)) throw new Error(`Invalid --mode: ${mode}`);
       const serverPath = path.resolve(option(rest, '--server-path') ?? path.join(__dirname, 'mcp-server.js'));
       return print(await generateClientConfigs({ projectRoot, serverPath, clients, mode }));
+    }
+    case 'register-codex': {
+      const projectRoot = await findProjectRoot(projectArg);
+      const serverPath = path.resolve(option(rest, '--server-path') ?? path.join(__dirname, 'mcp-server.js'));
+      return print({ path: await registerCodexMcp({ projectRoot, serverPath }) });
     }
     default:
       process.stdout.write(helpText());
@@ -75,7 +80,7 @@ function printOperation(value: { success: boolean }): void {
 }
 
 function helpText(): string {
-  return `EngineLink CLI\n\nCommands:\n  environment | doctor | build | clean --confirm | diagnostics\n  compile-commands | editor-process | launch\n  accept --tier L1|L2|L3 [--evidence-notes TEXT]\n  run --id ID | explain --id ID\n  configure --clients all|codex,cursor,claude --mode both|enginelink|unreal\n\nCommon options:\n  --project PATH --task-id ID --reason TEXT\n`;
+  return `EngineLink CLI\n\nCommands:\n  environment | doctor | build | clean --confirm | diagnostics\n  compile-commands | editor-process | launch\n  accept --tier L1|L2|L3 [--evidence-notes TEXT]\n  run --id ID | explain --id ID\n  configure --clients all|codex,cursor,claude --mode both|enginelink|unreal\n  register-codex\n\nCommon options:\n  --project PATH --server-path PATH --task-id ID --reason TEXT\n`;
 }
 
 main().catch((error) => {

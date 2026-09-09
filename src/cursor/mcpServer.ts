@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { EngineLinkContext } from '../types';
 import type { EngineLinkSettings } from '../config/settings';
+import { registerCodexMcp } from '../core/clientConfig';
 
 /**
  * Register the independent EngineLink stdio server for Cursor.
@@ -21,7 +22,12 @@ export async function startMcpServer(
     return;
   }
   await registerInCursorConfig(ctx.project.projectRoot, serverPath);
+  const codexConfigPath = await registerCodexMcp({
+    projectRoot: ctx.project.projectRoot,
+    serverPath,
+  });
   ctx.outputChannel.appendLine('[EngineLink] Registered independent EngineLink MCP for Cursor.');
+  ctx.outputChannel.appendLine(`[EngineLink] Registered EngineLink MCP for Codex: ${codexConfigPath}`);
 }
 
 /** Standalone MCP resolves its own context; extension state synchronization is intentionally absent. */

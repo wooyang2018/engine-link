@@ -19,6 +19,11 @@
 .PARAMETER Force
   Pass --force to the editor install command to replace an existing install.
 
+.PARAMETER CodexProjectRoot
+  Optional Unreal project root whose project-local Codex MCP config should be
+  updated after installation. The extension also performs this registration
+  automatically when it activates inside a UE project.
+
 .EXAMPLE
   .\Scripts\Install-EngineLink.ps1
 
@@ -34,7 +39,8 @@ param(
   [ValidateSet('Cursor', 'Code', 'Both')]
   [string] $Editor = 'Cursor',
   [switch] $SkipTest,
-  [switch] $Force
+  [switch] $Force,
+  [string] $CodexProjectRoot = ''
 )
 
 Set-StrictMode -Version Latest
@@ -150,6 +156,24 @@ foreach ($editorName in $editors) {
   }
 }
 
+if ($CodexProjectRoot) {
+  $resolvedCodexProjectRoot = (Resolve-Path $CodexProjectRoot -ErrorAction Stop).Path
+  if (-not (Get-ChildItem -LiteralPath $resolvedCodexProjectRoot -Filter '*.uproject' -File | Select-Object -First 1)) {
+    throw "CodexProjectRoot does not contain a .uproject file: $resolvedCodexProjectRoot"
+  }
+
+  Write-Step "Registering EngineLink MCP for Codex"
+  $serverPath = Join-Path $repoRoot 'dist\mcp-server.js'
+  node (Join-Path $repoRoot 'dist\cli.js') register-codex --project $resolvedCodexProjectRoot --server-path $serverPath
+  if ($LASTEXITCODE -ne 0) {
+    throw "Codex MCP registration failed with exit code $LASTEXITCODE"
+  }
+  Write-Host "Codex project config updated: $(Join-Path $resolvedCodexProjectRoot '.codex\config.toml')" -ForegroundColor Green
+}
+
 Write-Host ""
 Write-Host "Done. Reload the editor window to activate the new extension." -ForegroundColor Green
 Write-Host "Cursor: Developer: Reload Window" -ForegroundColor DarkGray
+if (-not $CodexProjectRoot) {
+  Write-Host "Codex: pass -CodexProjectRoot <UE project root> for immediate project-level MCP registration." -ForegroundColor DarkGray
+}
