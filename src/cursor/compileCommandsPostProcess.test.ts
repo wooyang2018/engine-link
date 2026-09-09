@@ -108,6 +108,30 @@ describe('normalizeClangdArguments', () => {
     expect(normalized[0]).toBe('/I');
     expect(normalized[1].replace(/\\/g, '/')).toBe(msvcInclude);
   });
+
+  it('removes vctoolsdir undefined and unwraps resource-dir', () => {
+    const normalized = normalizeClangdArguments(
+      ['-vctoolsdir', 'undefined', '-resource-dir="D:/llvm/clang/22"', '/TP'],
+      'D:/dir',
+    );
+
+    expect(normalized).not.toContain('undefined');
+    expect(normalized).not.toContain('-vctoolsdir');
+    const resourceDirIndex = normalized.indexOf('-resource-dir');
+    expect(resourceDirIndex).toBeGreaterThanOrEqual(0);
+    expect(normalized[resourceDirIndex + 1]).toBe('D:/llvm/clang/22');
+    expect(normalized).toContain('/TP');
+  });
+
+  it('skips /clang:-MF dependency flags', () => {
+    const normalized = normalizeClangdArguments(
+      ['/clang:-MF"D:/project/Foo.cpp.d"', '/TP'],
+      'D:/dir',
+    );
+
+    expect(normalized.some((arg) => arg.startsWith('/clang:-MF'))).toBe(false);
+    expect(normalized).toContain('/TP');
+  });
 });
 
 describe('extractResponseFilePaths', () => {
@@ -458,6 +482,68 @@ describe('postProcessCompileCommands', () => {
     expect(headerPaths).toEqual([
       path.join(projectRoot, 'Source', 'GAS_Learn', 'Public', 'AroundTargetActor.h').replace(/\\/g, '/'),
     ]);
+  });
+
+  it('injects SharedPCH when flattened obj.rsp lacks it', async () => {
+    const projectRoot = makeTempDir();
+    const moduleDir = path.join(
+      projectRoot,
+      'Intermediate',
+      'Build',
+      'Win64',
+      'x64',
+      'UnrealEditor',
+      'Development',
+      'TestGame',
+    );
+    fs.mkdirSync(moduleDir, { recursive: true });
+
+    const pchDir = path.join(
+      projectRoot,
+      'Intermediate',
+      'Build',
+      'Win64',
+      'x64',
+      'TestEditor',
+      'Development',
+      'UnrealEd',
+    );
+    fs.mkdirSync(pchDir, { recursive: true });
+    const sharedPch = path.join(pchDir, 'SharedPCH.UnrealEd.Project.h');
+    fs.writeFileSync(sharedPch, '#pragma once\n');
+    const definitions = path.join(moduleDir, 'Definitions.TestGame.h');
+    fs.writeFileSync(definitions, '#pragma once\n');
+
+    const lcRsp = path.join(moduleDir, 'Foo.cpp.obj.lc.rsp');
+    fs.writeFileSync(lcRsp, `/FI"${sharedPch.replace(/\\/g, '/')}"\n`);
+
+    const sourceCpp = path.join(projectRoot, 'Source', 'TestGame', 'Private', 'Foo.cpp');
+    fs.mkdirSync(path.dirname(sourceCpp), { recursive: true });
+    fs.writeFileSync(sourceCpp, '//\n');
+
+    const sharedRsp = path.join(moduleDir, 'TestGame.Shared.rsp');
+    const objRsp = path.join(moduleDir, 'Foo.cpp.obj.rsp');
+    fs.writeFileSync(sharedRsp, '-vctoolsdir undefined\n-resource-dir="D:/llvm/clang/22"\n');
+    fs.writeFileSync(
+      objRsp,
+      `"${sourceCpp.replace(/\\/g, '/')}"\n@"${sharedRsp.replace(/\\/g, '/')}"\n/FI"${definitions.replace(/\\/g, '/')}"\n`,
+    );
+
+    const entries: CompileCommandEntry[] = [
+      {
+        file: sourceCpp.replace(/\\/g, '/'),
+        directory: 'D:/Software/UE_5.8/Engine/Source',
+        output: path.join(moduleDir, 'Foo.cpp.obj').replace(/\\/g, '/'),
+      },
+    ];
+
+    const result = await postProcessCompileCommands(projectRoot, entries);
+    const cppEntry = result.entries.find((entry) => entry.file.endsWith('Foo.cpp'));
+
+    expect(cppEntry?.arguments?.some((arg) => arg.includes('SharedPCH'))).toBe(true);
+    expect(cppEntry?.arguments?.some((arg) => arg.includes('Definitions.TestGame'))).toBe(true);
+    expect(cppEntry?.arguments?.some((arg) => arg === 'undefined')).toBe(false);
+    expect(result.projectForcedIncludes?.sharedPch).toContain('SharedPCH');
   });
 });
 

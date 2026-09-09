@@ -109,6 +109,8 @@ export async function runCompileCommandsPostProcess(
     const changed = await ensureClangdConfig(projectRoot, {
       engineRoot,
       templateFlags: result.templateFlags,
+      projectRoot,
+      projectForcedIncludes: result.projectForcedIncludes,
     });
     if (changed) {
       ctx.outputChannel.appendLine('[EngineLink] .clangd updated with engine-source IntelliSense fallback.');
@@ -200,7 +202,7 @@ function extractClangDatabasePath(ubtOutput: string): string | undefined {
  * Search for the generated compile_commands.json and copy to project root.
  * UBT 5.x often writes next to the engine (e.g. UE_5.7\compile_commands.json), not inside the .uproject folder.
  */
-async function findAndPlaceCompileCommands(
+export async function findAndPlaceCompileCommands(
   ctx: EngineLinkContext,
   ubtReportedPath?: string,
 ): Promise<boolean> {
@@ -222,13 +224,9 @@ async function findAndPlaceCompileCommands(
     return true;
   };
 
-  // 0) Already at project root (OutputDir or prior copy)
-  if (await fileExists(targetPath)) {
-    ctx.outputChannel.appendLine('[EngineLink] compile_commands.json at project root.');
-    return true;
-  }
-
-  // 1) Path printed by UBT (most reliable across UE versions)
+  // 1) Path printed by this UBT invocation (most reliable across UE versions).
+  // Prefer it over an existing project-root file so Generate never post-processes
+  // a stale database left by an earlier invocation.
   if (ubtReportedPath && (await tryCopyFrom(ubtReportedPath, 'UBT output'))) {
     return true;
   }
@@ -252,6 +250,9 @@ async function findAndPlaceCompileCommands(
     }
   }
 
+  ctx.outputChannel.appendLine(
+    '[EngineLink] No compile_commands.json produced by this generation was found; refusing to use an existing project-root file.',
+  );
   return false;
 }
 

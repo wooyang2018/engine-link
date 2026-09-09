@@ -21,10 +21,16 @@ export interface PostProcessStats {
   broken: number;
 }
 
+export interface ProjectForcedIncludes {
+  sharedPch: string;
+  definitions: string;
+}
+
 export interface PostProcessResult {
   entries: CompileCommandEntry[];
   stats: PostProcessStats;
   templateFlags: string[];
+  projectForcedIncludes?: ProjectForcedIncludes;
 }
 
 const DEFAULT_CLANG_CL = 'clang-cl.exe';
@@ -346,10 +352,283 @@ export function normalizeClangdArguments(args: string[], directory: string): str
       continue;
     }
 
+    if (flag.startsWith('/clang:-MF')) {
+      continue;
+    }
+
+    if (lower === '-vctoolsdir') {
+      const next = expanded[i + 1];
+      if (next === 'undefined') {
+        i++;
+      }
+      continue;
+    }
+
+    if (flag.startsWith('-resource-dir=')) {
+      const resourceDir = stripQuotes(flag.slice('-resource-dir='.length));
+      normalized.push('-resource-dir', resourceDir);
+      continue;
+    }
+
+    if (lower === '-resource-dir') {
+      const next = expanded[i + 1];
+      if (next && !next.startsWith('/') && !next.startsWith('-')) {
+        normalized.push('-resource-dir', stripQuotes(next));
+        i++;
+        continue;
+      }
+    }
+
     normalized.push(flag);
   }
 
   return prioritizeForcedIncludes(stripMsvcOnlyClangdArgs(normalized));
+}
+
+function extractSharedPchFromRspContent(content: string): string | undefined {
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || !line.toLowerCase().includes('sharedpch')) {
+      continue;
+    }
+
+    const tokens: string[] = [];
+    for (const part of tokenizeCommandLine(line)) {
+      tokens.push(...splitGluedMsvcToken(stripQuotes(part)));
+    }
+
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i];
+      const upper = token.toUpperCase();
+      if (upper === '/FI') {
+        const includePath = tokens[i + 1];
+        if (includePath?.includes('SharedPCH')) {
+          return stripQuotes(includePath);
+        }
+      }
+      if (token.includes('SharedPCH') && token.endsWith('.h')) {
+        return stripQuotes(token);
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function argsIncludeSharedPch(args: string[]): boolean {
+  return args.some((arg) => arg.replace(/\\/g, '/').includes('SharedPCH'));
+}
+
+/**
+ * Discover UE SharedPCH and module Definitions headers for clangd forced includes.
+ */
+export async function discoverProjectForcedIncludes(
+  projectRoot: string,
+): Promise<ProjectForcedIncludes | undefined> {
+  const intermediate = path.join(projectRoot, 'Intermediate', 'Build');
+  if (!(await fileExists(intermediate))) {
+    return undefined;
+  }
+
+  let sharedPch: string | undefined;
+  const rspCandidates = await findFilesRecursive(
+    intermediate,
+    (name) => /\.obj\.(lc\.)?rsp(\.old)?$/i.test(name),
+    12,
+  );
+
+  for (const rspFile of rspCandidates) {
+    let content: string;
+    try {
+      content = await fs.promises.readFile(rspFile, 'utf-8');
+    } catch {
+      continue;
+    }
+    sharedPch = extractSharedPchFromRspContent(content);
+    if (sharedPch) {
+      break;
+    }
+  }
+
+  if (!sharedPch) {
+    const pchHeaders = await findFilesRecursive(
+      intermediate,
+      (name) => name.startsWith('SharedPCH') && name.endsWith('.h'),
+      12,
+    );
+    const preferred = pchHeaders.find(
+      (filePath) => filePath.includes('UnrealEd') && filePath.includes('Project'),
+    );
+    sharedPch = preferred ?? pchHeaders[0];
+  }
+
+  if (!sharedPch || !fs.existsSync(sharedPch)) {
+    return undefined;
+  }
+
+  const moduleNames = await collectProjectModuleNames(projectRoot);
+  const moduleDefinitions = await buildModuleDefinitionsMap(projectRoot);
+
+  let definitions = '';
+  for (const moduleName of moduleNames) {
+    const candidate = moduleDefinitions.get(moduleName.toLowerCase());
+    if (candidate) {
+      definitions = candidate;
+      break;
+    }
+  }
+
+  return {
+    sharedPch: toForwardSlashes(sharedPch),
+    definitions,
+  };
+}
+
+async function collectProjectModuleNames(projectRoot: string): Promise<string[]> {
+  const names = new Set<string>();
+
+  const sourceDir = path.join(projectRoot, 'Source');
+  if (await fileExists(sourceDir)) {
+    const entries = await fs.promises.readdir(sourceDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        names.add(entry.name);
+      }
+    }
+  }
+
+  const pluginsDir = path.join(projectRoot, 'Plugins');
+  if (await fileExists(pluginsDir)) {
+    const pluginEntries = await fs.promises.readdir(pluginsDir, { withFileTypes: true });
+    for (const plugin of pluginEntries) {
+      if (!plugin.isDirectory()) {
+        continue;
+      }
+      const pluginSource = path.join(pluginsDir, plugin.name, 'Source');
+      if (!(await fileExists(pluginSource))) {
+        continue;
+      }
+      const moduleEntries = await fs.promises.readdir(pluginSource, { withFileTypes: true });
+      for (const moduleEntry of moduleEntries) {
+        if (moduleEntry.isDirectory()) {
+          names.add(moduleEntry.name);
+        }
+      }
+    }
+  }
+
+  return [...names];
+}
+
+function moduleNameFromSourceFile(filePath: string, projectRoot: string): string | undefined {
+  const normalized = toForwardSlashes(filePath);
+  const projectKey = toForwardSlashes(projectRoot);
+  const sourceMatch = normalized.match(new RegExp(`${projectKey}/Source/([^/]+)/`, 'i'));
+  if (sourceMatch) {
+    return sourceMatch[1];
+  }
+
+  const pluginMatch = normalized.match(/\/Plugins\/[^/]+\/Source\/([^/]+)\//i);
+  return pluginMatch?.[1];
+}
+
+async function resolveDefinitionsForModule(
+  projectRoot: string,
+  moduleName: string,
+): Promise<string | undefined> {
+  const intermediate = path.join(projectRoot, 'Intermediate', 'Build');
+  const targetName = `Definitions.${moduleName}.h`;
+  const candidates = await findFilesRecursive(
+    intermediate,
+    (name) => name.toLowerCase() === targetName.toLowerCase(),
+    12,
+  );
+
+  const moduleKey = `/development/${moduleName.toLowerCase()}/`;
+  const inModuleDir = candidates.find((filePath) =>
+    normalizeFileKey(filePath).includes(moduleKey),
+  );
+  if (inModuleDir) {
+    return toForwardSlashes(inModuleDir);
+  }
+
+  if (candidates[0]) {
+    return toForwardSlashes(candidates[0]);
+  }
+
+  const fallback = path.join(
+    intermediate,
+    'Win64',
+    'x64',
+    'UnrealEditor',
+    'Development',
+    moduleName,
+    'Definitions.h',
+  );
+  if (fs.existsSync(fallback)) {
+    return toForwardSlashes(fallback);
+  }
+
+  return undefined;
+}
+
+async function buildModuleDefinitionsMap(projectRoot: string): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  for (const moduleName of await collectProjectModuleNames(projectRoot)) {
+    const definitions = await resolveDefinitionsForModule(projectRoot, moduleName);
+    if (definitions) {
+      map.set(moduleName.toLowerCase(), definitions);
+    }
+  }
+  return map;
+}
+
+/**
+ * Prepend missing SharedPCH / Definitions forced includes for clangd project TUs.
+ */
+export function injectProjectForcedIncludes(
+  args: string[],
+  forced: ProjectForcedIncludes,
+): string[] {
+  if (argsIncludeSharedPch(args)) {
+    return args;
+  }
+
+  const toInject: string[] = ['/FI', forced.sharedPch];
+  if (forced.definitions) {
+    toInject.push('/FI', forced.definitions);
+  }
+
+  const hasCompiler =
+    args.length > 0 && (args[0].endsWith('clang-cl.exe') || args[0] === 'clang-cl.exe');
+  const compiler = hasCompiler ? args[0] : DEFAULT_CLANG_CL;
+  const rest = hasCompiler ? args.slice(1) : args;
+  return prioritizeForcedIncludes([compiler, ...toInject, ...rest]);
+}
+
+function applyProjectForcedIncludes(
+  entry: CompileCommandEntry,
+  projectRoot: string,
+  sharedPch: string,
+  moduleDefinitions: Map<string, string>,
+): CompileCommandEntry {
+  if (!entry.arguments || entry.arguments.length === 0) {
+    return entry;
+  }
+  if (!isProjectSourceFile(entry.file, projectRoot)) {
+    return entry;
+  }
+  if (!/\.(cpp|h)$/i.test(entry.file)) {
+    return entry;
+  }
+
+  const moduleName = moduleNameFromSourceFile(entry.file, projectRoot);
+  const definitions = moduleName ? moduleDefinitions.get(moduleName.toLowerCase()) ?? '' : '';
+
+  return {
+    ...entry,
+    arguments: injectProjectForcedIncludes(entry.arguments, { sharedPch, definitions }),
+  };
 }
 
 /**
@@ -999,11 +1278,26 @@ export async function postProcessCompileCommands(
     stats.engineHeaderEntries = engineHeaders.engineHeaderEntries;
   }
 
-  const deduped = dedupeEntriesByFile(finalEntries);
-  stats.total = deduped.length;
-  const templateFlags = pickTemplateFlags(deduped, projectRoot);
+  // The engine fallback block in `.clangd` must contain only generic normalized
+  // flags.  Project/module forced includes are applied to the compile database
+  // entries below and belong to the project-source PathMatch block, not to the
+  // engine-source template.  Selecting the template after injection leaks
+  // project-specific `/FI` paths (and any stale header alias) into the engine
+  // rule.
+  const templateFlags = pickTemplateFlags(finalEntries, projectRoot);
 
-  return { entries: deduped, stats, templateFlags };
+  const forcedIncludes = await discoverProjectForcedIncludes(projectRoot);
+  const moduleDefinitions = await buildModuleDefinitionsMap(projectRoot);
+  const withForcedIncludes = forcedIncludes
+    ? finalEntries.map((entry) =>
+        applyProjectForcedIncludes(entry, projectRoot, forcedIncludes.sharedPch, moduleDefinitions),
+      )
+    : finalEntries;
+
+  const deduped = dedupeEntriesByFile(withForcedIncludes);
+  stats.total = deduped.length;
+
+  return { entries: deduped, stats, templateFlags, projectForcedIncludes: forcedIncludes };
 }
 
 function entryQualityScore(entry: CompileCommandEntry): number {
