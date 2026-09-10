@@ -5,11 +5,15 @@ export const VSCODE_SETTINGS_MANAGED_BEGIN = '// <<< enginelink-managed >>>';
 export const VSCODE_SETTINGS_MANAGED_END = '// <<< end-enginelink-managed >>>';
 
 function managedSettingsBlock(): string {
+  // NOTE: do NOT add --compile-commands-dir here. vscode-clangd runs a single
+  // server per window, so a ${workspaceFolder}-scoped flag forces every folder
+  // in a multi-root workspace onto the first folder's database. Without it,
+  // clangd's per-file ancestor search finds each project root's
+  // compile_commands.json (and the engine-root one for engine sources).
   return [
     VSCODE_SETTINGS_MANAGED_BEGIN,
     '"C_Cpp.default.compileCommands": "${workspaceFolder}/compile_commands.json",',
     '"clangd.arguments": [',
-    '  "--compile-commands-dir=${workspaceFolder}",',
     '  "--query-driver=**/clang-cl.exe"',
     ']',
     VSCODE_SETTINGS_MANAGED_END,

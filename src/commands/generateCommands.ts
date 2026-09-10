@@ -74,6 +74,7 @@ export async function generateCompileCommands(
       }
 
       const postProcess = await runCompileCommandsPostProcess(ctx);
+      await restartClangdIfAvailable(ctx);
       if (postProcess.stats.broken > 0) {
         vscode.window.showWarningMessage(
           `EngineLink: compile_commands.json post-processed with ${postProcess.stats.broken} broken entr${postProcess.stats.broken === 1 ? 'y' : 'ies'}.`,
@@ -85,6 +86,20 @@ export async function generateCompileCommands(
       }
     },
   );
+}
+
+/**
+ * Ask the vscode-clangd extension to restart so it picks up a rewritten
+ * compile_commands.json. A running server caches the database and keeps
+ * publishing stale diagnostics until restarted. No-op when clangd is absent.
+ */
+export async function restartClangdIfAvailable(ctx: EngineLinkContext): Promise<void> {
+  try {
+    await vscode.commands.executeCommand('clangd.restart');
+    ctx.outputChannel.appendLine('[EngineLink] Restarted clangd to reload compile_commands.json.');
+  } catch {
+    ctx.outputChannel.appendLine('[EngineLink] clangd.restart not available; reload the window to refresh IntelliSense.');
+  }
 }
 
 /**
@@ -105,12 +120,16 @@ export async function runCompileCommandsPostProcess(
   );
 
   if (engineRoot && result.templateFlags.length > 0) {
-    const { ensureClangdConfig } = await import('../cursor/clangdConfig');
+    const { ensureClangdConfig, ensureIdeOverridesHeader } = await import('../cursor/clangdConfig');
+    const ideOverridesHeader = ctx.globalStoragePath
+      ? await ensureIdeOverridesHeader(ctx.globalStoragePath)
+      : undefined;
     const changed = await ensureClangdConfig(projectRoot, {
       engineRoot,
       templateFlags: result.templateFlags,
       projectRoot,
       projectForcedIncludes: result.projectForcedIncludes,
+      ideOverridesHeader,
     });
     if (changed) {
       ctx.outputChannel.appendLine('[EngineLink] .clangd updated with engine-source IntelliSense fallback.');
@@ -160,6 +179,7 @@ export async function ensureCompileCommandsIntellisense(
     );
   }
   const postProcess = await runCompileCommandsPostProcess(ctx);
+  await restartClangdIfAvailable(ctx);
 
   if (postProcess.stats.broken > 0 && options.allowRegenerate && settings.autoGenerateCompileCommands) {
     ctx.outputChannel.appendLine(

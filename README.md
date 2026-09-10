@@ -84,6 +84,8 @@ If IntelliSense still cannot find the compilation database (e.g. generation fail
 
 Use the **directory** that contains `compile_commands.json`, forward slashes, then reload the window.
 
+> **Multi-root warning:** vscode-clangd runs a single server per window, so `--compile-commands-dir` applies to *every* folder in a multi-root workspace and forces them all onto one project's database (causing `file not found` / undeclared-identifier errors in the other projects). EngineLink therefore does **not** set this flag automatically — prefer letting clangd find each project root's `compile_commands.json` via its per-file ancestor search, and only use the flag as a manual escape hatch in single-root windows.
+
 #### MSVC intrinsic false positives (builtin_definition)
 
 When clangd parses UE code with MSVC-style headers, you may see **"definition of builtin function"** errors on system headers. This is a known clangd/MSVC quirk, not an error in your code — the real UE build is unaffected.

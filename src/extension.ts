@@ -15,7 +15,7 @@ import { EngineLinkSettings } from './config/settings';
 import { StatusBarManager } from './ui/statusBar';
 import { createOutputChannel } from './ui/outputChannel';
 import { generateCursorRules } from './cursor/rulesGenerator';
-import { ensureClangdConfig } from './cursor/clangdConfig';
+import { ensureClangdConfig, ensureIdeOverridesHeader } from './cursor/clangdConfig';
 import { ensureVscodeSettings } from './cursor/vscodeSettings';
 import { registerProjectMcpServers } from './mcp/clientRegistration';
 import { EngineLinkTaskProvider } from './build/taskProvider';
@@ -34,6 +34,7 @@ export async function activate(extensionContext: vscode.ExtensionContext) {
     project: undefined,
     engine: undefined,
     buildTools: undefined,
+    globalStoragePath: extensionContext.globalStorageUri.fsPath,
     outputChannel,
     diagnosticCollection: vscode.languages.createDiagnosticCollection(EXTENSION_ID),
     lastBuildErrors: [],
@@ -193,8 +194,10 @@ async function runDetectionPipeline(options?: { allowAutoCompileDb?: boolean }) 
   // clangd: suppress MSVC vs Clang intrinsic false positives in IDE
   if (context.project && settings.upsertClangdConfig) {
     try {
+      const ideOverridesHeader = await ensureIdeOverridesHeader(context.globalStoragePath);
       const changed = await ensureClangdConfig(context.project.projectRoot, {
         engineRoot: context.engine?.root,
+        ideOverridesHeader,
       });
       if (changed) {
         outputChannel.appendLine('[EngineLink] .clangd updated (clangd: suppress builtin_definition).');

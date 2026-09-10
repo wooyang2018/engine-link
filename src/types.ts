@@ -88,6 +88,8 @@ export interface EngineLinkContext {
   project: UEProject | undefined;
   engine: UEInstallation | undefined;
   buildTools: VSBuildTools | undefined;
+  /** Extension global storage directory (stable across extension updates). */
+  globalStoragePath: string;
   outputChannel: vscode.OutputChannel;
   diagnosticCollection: vscode.DiagnosticCollection;
   lastBuildErrors: ParsedDiagnostic[];

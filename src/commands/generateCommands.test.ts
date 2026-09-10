@@ -3,9 +3,13 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('vscode', () => ({}));
+const { executeCommand } = vi.hoisted(() => ({ executeCommand: vi.fn() }));
 
-import { findAndPlaceCompileCommands } from './generateCommands';
+vi.mock('vscode', () => ({
+  commands: { executeCommand },
+}));
+
+import { findAndPlaceCompileCommands, restartClangdIfAvailable } from './generateCommands';
 
 const tempDirs: string[] = [];
 
@@ -62,5 +66,23 @@ describe('findAndPlaceCompileCommands', () => {
 
     expect(placed).toBe(false);
     await expect(fs.promises.readFile(targetPath, 'utf8')).resolves.toBe('stale');
+  });
+});
+
+describe('restartClangdIfAvailable', () => {
+  it('invokes clangd.restart so the server reloads compile_commands.json', async () => {
+    executeCommand.mockClear();
+    executeCommand.mockResolvedValue(undefined);
+
+    await restartClangdIfAvailable(makeContext('p', 'e'));
+
+    expect(executeCommand).toHaveBeenCalledWith('clangd.restart');
+  });
+
+  it('does not throw when the clangd extension is missing', async () => {
+    executeCommand.mockClear();
+    executeCommand.mockRejectedValue(new Error('command not found'));
+
+    await expect(restartClangdIfAvailable(makeContext('p', 'e'))).resolves.toBeUndefined();
   });
 });
