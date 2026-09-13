@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { parseJsonValue } from '../parsers/safeJson';
 
 export interface ProjectMcpRegistrationOptions {
   projectRoot: string;
@@ -49,7 +50,7 @@ async function registerJsonMcp(configPath: string, server: JsonMcpServer): Promi
   let config: Record<string, unknown> = {};
   const existing = await readOptionalFile(configPath);
   if (existing !== undefined) {
-    const parsed = JSON.parse(existing) as unknown;
+    const parsed = parseJsonValue(existing, configPath);
     if (!isRecord(parsed)) {
       throw new Error(`MCP configuration must be a JSON object: ${configPath}`);
     }

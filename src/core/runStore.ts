@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { parseJsonValue } from '../parsers/safeJson';
 
 export interface RunRecord {
   schema: 'enginelink.run.v1';
@@ -38,13 +39,13 @@ export class RunStore {
   async get(id: string): Promise<RunRecord> {
     if (!/^[A-Za-z0-9_.-]+$/.test(id)) throw new Error('Invalid run id');
     const file = path.join(this.projectRoot, 'Saved', 'EngineLink', 'Runs', id, 'summary.json');
-    return JSON.parse(await fs.promises.readFile(file, 'utf8')) as RunRecord;
+    return parseJsonValue<RunRecord>(await fs.promises.readFile(file), file);
   }
 
   async getLatest(kind: string): Promise<RunRecord | undefined> {
     const file = path.join(this.projectRoot, 'Saved', 'EngineLink', `latest-${kind}.json`);
-    return fs.promises.readFile(file, 'utf8').then(
-      (text) => JSON.parse(text) as RunRecord,
+    return fs.promises.readFile(file).then(
+      (text) => parseJsonValue<RunRecord>(text, file),
       () => undefined,
     );
   }

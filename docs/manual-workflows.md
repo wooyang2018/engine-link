@@ -1,6 +1,6 @@
 # EngineLink manual workflows
 
-EngineLink automates host-side work. These are the equivalent manual operations so users can understand and reproduce each action without MCP.
+EngineLink automates host-side work and coordinates read-only Unreal diagnostics. These are equivalent manual operations so users can understand and reproduce each action without MCP.
 
 ## Diagnose the environment
 
@@ -9,7 +9,7 @@ EngineLink automates host-side work. These are the equivalent manual operations 
 3. Open Visual Studio Installer and verify **Desktop development with C++**, MSVC, and a Windows SDK.
 4. Install `clang-cl` when clangd/`compile_commands.json` navigation is required.
 
-Equivalent CLI: `node dist/cli.js doctor --project <project-root>`.
+Equivalent CLI: `node dist/cli.js project-doctor --project <project-root> --mode preflight` (host toolchain plus Editor/MCP readiness when the Editor is running).
 
 ## Cold-build the Editor target
 

@@ -1,12 +1,25 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { BuildConfiguration, BuildPlatform, BuildTargetType } from '../types';
+import { parseJsonValue } from '../parsers/safeJson';
 
 export interface AcceptanceConfig {
   command: string;
   args?: string[];
   tierArgument?: string;
   evidenceRoot?: string;
+}
+
+export interface UnrealMcpConfig {
+  /** Local Streamable HTTP endpoint exposed by Unreal Editor. */
+  url?: string;
+  connectTimeoutMs?: number;
+  requestTimeoutMs?: number;
+}
+
+export interface DoctorConfig {
+  rulesDirectory?: string;
+  scenariosDirectory?: string;
 }
 
 export interface EngineLinkProjectConfig {
@@ -20,6 +33,8 @@ export interface EngineLinkProjectConfig {
   };
   editor?: { map?: string; args?: string[] };
   acceptance?: AcceptanceConfig;
+  unrealMcp?: UnrealMcpConfig;
+  doctor?: DoctorConfig;
   agentGuide?: string;
 }
 
@@ -52,7 +67,7 @@ export async function loadProjectConfig(projectRoot: string): Promise<EngineLink
     return { schemaVersion: 1, uproject: uprojects[0] };
   }
 
-  const parsed = JSON.parse(await fs.promises.readFile(configPath, 'utf8')) as EngineLinkProjectConfig;
+  const parsed = parseJsonValue<EngineLinkProjectConfig>(await fs.promises.readFile(configPath), configPath);
   if (parsed.schemaVersion !== 1) throw new Error(`Unsupported EngineLink schemaVersion: ${parsed.schemaVersion}`);
   if (!parsed.uproject || path.isAbsolute(parsed.uproject)) {
     throw new Error('project.json uproject must be a project-relative path');

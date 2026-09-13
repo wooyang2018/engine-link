@@ -41,7 +41,16 @@ async function dispatch(name: string, args: Record<string, unknown>): Promise<un
   };
   switch (name) {
     case 'enginelink_get_environment': return service.getEnvironment();
-    case 'enginelink_doctor': return service.doctor();
+    case 'enginelink_project_doctor_start': return service.startProjectDoctor({
+      ...context,
+      mode: stringArg(args, 'mode') as 'preflight' | 'changed' | 'scenario' | undefined,
+      paths: stringArrayArg(args, 'paths'),
+      referenceQueries: stringArrayArg(args, 'referenceQueries'),
+      scenarioNames: stringArrayArg(args, 'scenarioNames'),
+      baselineRunId: stringArg(args, 'baselineRunId'),
+    });
+    case 'enginelink_get_doctor_run': return service.getProjectDoctorRun(requiredString(args, 'runId'));
+    case 'enginelink_cancel_doctor_run': return service.cancelProjectDoctorRun(requiredString(args, 'runId'));
     case 'enginelink_build': return service.build(build);
     case 'enginelink_clean': return service.clean({ ...build, confirm: args.confirm === true });
     case 'enginelink_get_build_diagnostics': return service.getBuildDiagnostics();
@@ -71,6 +80,15 @@ function requiredString(args: Record<string, unknown>, name: string): string {
   const value = stringArg(args, name);
   if (!value) throw new Error(`Missing required argument: ${name}`);
   return value;
+}
+
+function stringArrayArg(args: Record<string, unknown>, name: string): string[] | undefined {
+  const value = args[name];
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    throw new Error(`${name} must be an array of strings`);
+  }
+  return value as string[];
 }
 
 function toObject(value: unknown): Record<string, unknown> | undefined {

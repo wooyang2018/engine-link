@@ -12,7 +12,20 @@ const buildOptions = {
 
 export const TOOL_DEFINITIONS = [
   tool('enginelink_get_environment', 'Return the host-side Unreal project, engine, toolchain, and build defaults.', {}),
-  tool('enginelink_doctor', 'Check host build prerequisites and report actionable warnings without changing the project.', {}),
+  tool('enginelink_project_doctor_start', 'Start a persisted, read-only UE Project Doctor run. Returns immediately; poll enginelink_get_doctor_run for the terminal result.', {
+    ...operationContext,
+    mode: { type: 'string', enum: ['preflight', 'changed', 'scenario'], description: 'changed scans Git changes by default; scenario runs named project scenarios.' },
+    paths: { type: 'array', items: { type: 'string' }, description: 'Optional project files or /Game asset paths to scan instead of Git changes.' },
+    referenceQueries: { type: 'array', items: { type: 'string' }, description: 'Old or new /Game paths whose referencers and dependencies should be audited.' },
+    scenarioNames: { type: 'array', items: { type: 'string' }, description: 'Scenario filenames (without .json) under the configured Doctor scenarios directory.' },
+    baselineRunId: { type: 'string', description: 'Prior Doctor run to compare for resolved, persisting, introduced, and unverified issues.' },
+  }),
+  tool('enginelink_get_doctor_run', 'Read current progress or the final auditable report for a Project Doctor run.', {
+    runId: { type: 'string', description: 'Doctor run identifier returned by enginelink_project_doctor_start.' },
+  }, ['runId']),
+  tool('enginelink_cancel_doctor_run', 'Cancel a Project Doctor run owned by this EngineLink process and request scenario teardown.', {
+    runId: { type: 'string', description: 'Running Doctor run identifier.' },
+  }, ['runId']),
   tool('enginelink_build', 'Run a cold UnrealBuildTool build. Refuses when this project is open in Unreal Editor; use Unreal MCP Live Coding for compatible in-editor changes.', buildOptions),
   tool('enginelink_clean', 'Clean UnrealBuildTool products. This is destructive and requires confirm=true.', {
     ...buildOptions,

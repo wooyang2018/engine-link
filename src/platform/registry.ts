@@ -8,7 +8,7 @@ export async function readRegistryValue(
   valueName: string,
 ): Promise<string | undefined> {
   try {
-    const result = await spawnAsync('reg', ['query', keyPath, '/v', valueName], { shell: true });
+    const result = await spawnAsync('reg.exe', ['query', keyPath, '/v', valueName]);
     if (result.exitCode !== 0) return undefined;
 
     // Parse the output: "    ValueName    REG_SZ    ValueData"
@@ -31,7 +31,7 @@ export async function readRegistryValue(
  */
 export async function enumerateRegistrySubKeys(keyPath: string): Promise<string[]> {
   try {
-    const result = await spawnAsync('reg', ['query', keyPath], { shell: true });
+    const result = await spawnAsync('reg.exe', ['query', keyPath]);
     if (result.exitCode !== 0) return [];
 
     const subKeys: string[] = [];
@@ -58,7 +58,7 @@ export async function readRegistryKeyValues(
 ): Promise<Map<string, string>> {
   const values = new Map<string, string>();
   try {
-    const result = await spawnAsync('reg', ['query', keyPath], { shell: true });
+    const result = await spawnAsync('reg.exe', ['query', keyPath]);
     if (result.exitCode !== 0) return values;
 
     for (const line of result.stdout.split('\n')) {

@@ -6,7 +6,9 @@ describe('EngineLink MCP boundary', () => {
     const names = TOOL_DEFINITIONS.map((tool) => tool.name);
     expect(names).toEqual([
       'enginelink_get_environment',
-      'enginelink_doctor',
+      'enginelink_project_doctor_start',
+      'enginelink_get_doctor_run',
+      'enginelink_cancel_doctor_run',
       'enginelink_build',
       'enginelink_clean',
       'enginelink_get_build_diagnostics',

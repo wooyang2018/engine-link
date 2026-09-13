@@ -8,8 +8,11 @@ import { parseBuildLine } from '../parsers/buildOutputParser';
 import { spawnAsync } from '../platform/process';
 import type { BuildConfiguration, BuildPlatform, BuildTargetType, ParsedDiagnostic } from '../types';
 import { exists } from './config';
-import { listProjectPlugins, resolveStandaloneContext, type StandaloneContext } from './discovery';
+import { resolveStandaloneContext, type StandaloneContext } from './discovery';
 import { createRunId, RunStore, type RunRecord } from './runStore';
+import { ProjectDoctor } from '../doctor/projectDoctor';
+import type { DoctorRun, DoctorStartOptions } from '../doctor/types';
+import { parseJsonValue } from '../parsers/safeJson';
 
 export interface OperationContext {
   taskId?: string;
@@ -31,13 +34,19 @@ export interface EditorProcessInfo {
   pid: number;
   project?: string;
   commandLine?: string;
+  startedAt?: string;
 }
 
 export class EngineLinkService {
   private readonly contextPromise: Promise<StandaloneContext>;
+  private readonly projectDoctor: ProjectDoctor;
 
   constructor(startPath = process.cwd()) {
     this.contextPromise = resolveStandaloneContext(startPath);
+    this.projectDoctor = new ProjectDoctor(
+      () => this.contextPromise,
+      () => this.getEditorProcess(),
+    );
   }
 
   async getEnvironment(): Promise<Record<string, unknown>> {
@@ -57,33 +66,20 @@ export class EngineLinkService {
     };
   }
 
-  async doctor(): Promise<Record<string, unknown>> {
-    const ctx = await this.contextPromise;
-    const buildTools = await detectBuildTools();
-    const plugins = await listProjectPlugins(ctx.projectRoot);
-    const gitmodules = await exists(path.join(ctx.projectRoot, '.gitmodules'));
-    const clang = await this.detectClang(buildTools?.installationPath);
-    const warnings: string[] = [];
-    if (!buildTools) warnings.push('Visual Studio C++ Build Tools were not detected.');
-    else if (!buildTools.hasWindowsSDK) warnings.push('Visual Studio was found, but the expected Windows SDK component was not detected.');
-    if (!clang) warnings.push('clang-cl was not found; compile_commands.json can be generated but IntelliSense may be incomplete.');
-    if (!gitmodules && plugins.some((plugin) => plugin.nestedGit)) {
-      warnings.push('One or more Plugins directories contain nested Git repositories but the project has no .gitmodules; plugin revisions are not pinned by the parent repository.');
-    }
-    if (!(await exists(path.join(ctx.projectRoot, '.gitattributes')))) {
-      warnings.push('No .gitattributes file is present; large binary Unreal assets have no repository-level LFS or locking policy.');
-    }
-    return {
-      healthy: warnings.length === 0,
-      projectFile: ctx.project.uprojectPath,
-      engineRoot: ctx.engine.root,
-      ubt: { path: ctx.engine.ubtPath, exists: await exists(ctx.engine.ubtPath) },
-      editor: { path: ctx.engine.editorPath, exists: await exists(ctx.engine.editorPath) },
-      buildTools: buildTools ?? null,
-      clang,
-      plugins,
-      warnings,
-    };
+  async startProjectDoctor(options: DoctorStartOptions = {}): Promise<DoctorRun> {
+    return this.projectDoctor.start(options);
+  }
+
+  async getProjectDoctorRun(runId: string): Promise<DoctorRun> {
+    return this.projectDoctor.get(runId);
+  }
+
+  async cancelProjectDoctorRun(runId: string): Promise<DoctorRun> {
+    return this.projectDoctor.cancel(runId);
+  }
+
+  async waitForProjectDoctorRun(runId: string, timeoutMs?: number): Promise<DoctorRun> {
+    return this.projectDoctor.waitForTerminal(runId, timeoutMs);
   }
 
   async build(options: BuildOptions = {}): Promise<RunRecord> {
@@ -144,10 +140,10 @@ export class EngineLinkService {
     return record;
   }
 
-  async getEditorProcess(): Promise<{ running: boolean; process: EditorProcessInfo | null }> {
+  async getEditorProcess(): Promise<{ running: boolean; process: EditorProcessInfo | null; processes: EditorProcessInfo[] }> {
     const ctx = await this.contextPromise;
-    const processInfo = await this.findProjectEditor(ctx.project.uprojectPath);
-    return { running: !!processInfo, process: processInfo ?? null };
+    const processes = await this.findProjectEditors(ctx.project.uprojectPath);
+    return { running: processes.length > 0, process: processes[0] ?? null, processes };
   }
 
   async launchEditor(options: OperationContext = {}): Promise<Record<string, unknown>> {
@@ -266,27 +262,24 @@ export class EngineLinkService {
   }
 
   private async findProjectEditor(uprojectPath: string): Promise<EditorProcessInfo | undefined> {
-    if (process.platform !== 'win32') return undefined;
-    const script = "Get-CimInstance Win32_Process -Filter \"Name='UnrealEditor.exe'\" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress";
-    const result = await spawnAsync('powershell.exe', ['-NoProfile', '-Command', script]).catch(() => undefined);
-    if (!result || result.exitCode !== 0 || !result.stdout.trim()) return undefined;
-    const parsed = JSON.parse(result.stdout) as Record<string, unknown> | Array<Record<string, unknown>>;
-    const rows = Array.isArray(parsed) ? parsed : [parsed];
-    const target = path.resolve(uprojectPath).toLowerCase();
-    const match = rows.find((row) => String(row.CommandLine ?? '').toLowerCase().includes(target));
-    if (!match) return undefined;
-    return { pid: Number(match.ProcessId), project: uprojectPath, commandLine: String(match.CommandLine ?? '') };
+    return (await this.findProjectEditors(uprojectPath))[0];
   }
 
-  private async detectClang(buildToolsRoot?: string): Promise<boolean> {
-    const lookup: [string, string[]] = process.platform === 'win32'
-      ? ['where.exe', ['clang-cl.exe']]
-      : ['which', ['clang++']];
-    if ((await spawnAsync(lookup[0], lookup[1]).catch(() => ({ exitCode: 1, stdout: '', stderr: '' }))).exitCode === 0) {
-      return true;
-    }
-    if (!buildToolsRoot) return false;
-    return exists(path.join(buildToolsRoot, 'VC', 'Tools', 'Llvm', 'x64', 'bin', 'clang-cl.exe'));
+  private async findProjectEditors(uprojectPath: string): Promise<EditorProcessInfo[]> {
+    if (process.platform !== 'win32') return [];
+    const script = "Get-CimInstance Win32_Process -Filter \"Name='UnrealEditor.exe'\" | Select-Object ProcessId,CommandLine,CreationDate | ConvertTo-Json -Compress";
+    const result = await spawnAsync('powershell.exe', ['-NoProfile', '-Command', script]).catch(() => undefined);
+    if (!result || result.exitCode !== 0 || !result.stdout.trim()) return [];
+    const parsed = parseJsonValue<Record<string, unknown> | Array<Record<string, unknown>>>(result.stdout, 'Win32_Process query');
+    const rows = Array.isArray(parsed) ? parsed : [parsed];
+    const target = path.resolve(uprojectPath).toLowerCase();
+    return rows
+      .filter((row) => String(row.CommandLine ?? '').toLowerCase().includes(target))
+      .sort((a, b) => String(b.CreationDate ?? '').localeCompare(String(a.CreationDate ?? '')))
+      .map((match) => ({
+        pid: Number(match.ProcessId), project: uprojectPath, commandLine: String(match.CommandLine ?? ''),
+        startedAt: normalizeCimDate(match.CreationDate),
+      }));
   }
 
   private async findLatestEvidence(ctx: StandaloneContext, configuredRoot?: string): Promise<string | undefined> {
@@ -310,4 +303,11 @@ function redactArgs(args: string[]): string[] {
     if (/token|secret|password|api[-_]?key/.test(previous)) return '[REDACTED]';
     return arg.replace(/((?:token|secret|password|api[-_]?key)=)[^\s]+/gi, '$1[REDACTED]');
   });
+}
+
+function normalizeCimDate(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value) return undefined;
+  const dotNet = value.match(/^\/Date\((\d+)/);
+  const parsed = dotNet ? Number(dotNet[1]) : Date.parse(value);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined;
 }

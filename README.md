@@ -163,6 +163,7 @@ If auto-detection fails, override paths in [Configuration](#configuration).
 - **CLI** — exposes the same core operations to humans and CI
 - **Project MCP registration** — registers EngineLink for Cursor, Codex, and Claude Code when the extension activates
 - **Cursor rules** — generates `.cursor/rules/*.mdc` files so the AI writes idiomatic Unreal C++
+- **UE Project Doctor** — safety-gated changed-scope asset/Blueprint diagnostics, declarative rules, repeatable VibeUE scenarios, and baseline comparison
 
 ### Editor UX
 
@@ -225,7 +226,9 @@ Registration is idempotent and preserves unrelated MCP servers. Cursor and Claud
 | Tool | Description |
 |---|---|
 | `enginelink_get_environment` | Project, engine, toolchain, and build defaults |
-| `enginelink_doctor` | Read-only host prerequisite and dependency checks |
+| `enginelink_project_doctor_start` | Start a persisted `preflight`, `changed`, or `scenario` diagnostic run |
+| `enginelink_get_doctor_run` | Poll progress and read the final evidence-backed Doctor report |
+| `enginelink_cancel_doctor_run` | Cancel a run owned by this EngineLink process and request teardown |
 | `enginelink_build` | Cold build; refuses while this project is open in Editor |
 | `enginelink_clean` | Clean build artifacts with explicit confirmation |
 | `enginelink_get_build_diagnostics` | Structured diagnostics from the latest cold build |
@@ -240,10 +243,13 @@ Live Coding is deliberately not an EngineLink MCP tool. Agents should call Unrea
 ### CLI and client configuration
 
 ```powershell
-node dist/cli.js doctor --project D:/Workspace/MyGame
+node dist/cli.js project-doctor --project D:/Workspace/MyGame --mode changed
+node dist/cli.js project-doctor --project D:/Workspace/MyGame --mode scenario --scenario single-client-smoke
 node dist/cli.js build --project D:/Workspace/MyGame --reason "verify C++ change"
 node dist/cli.js accept --project D:/Workspace/MyGame --tier L2
 ```
+
+See [UE Project Doctor](docs/project-doctor.md) for rule and scenario schemas, safety behavior, report locations, and baseline verification.
 
 ---
 

@@ -4,6 +4,7 @@ import { spawnAsync } from '../platform/process';
 import { fileExists } from '../platform/paths';
 import { readRegistryValue } from '../platform/registry';
 import type { VSBuildTools } from '../types';
+import { parseJsonValue } from '../parsers/safeJson';
 
 const VSWHERE_PATH =
   'C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe';
@@ -38,16 +39,18 @@ export async function detectBuildTools(
 
     if (result.exitCode !== 0) return undefined;
 
-    const installations = JSON.parse(result.stdout);
+    const installations = parseJsonValue<Array<Record<string, unknown>>>(result.stdout, 'vswhere latest output');
     if (!Array.isArray(installations) || installations.length === 0) return undefined;
 
     const install = installations[0];
+    const installationPath = typeof install.installationPath === 'string' ? install.installationPath : '';
+    if (!installationPath) return undefined;
     return {
-      installationPath: install.installationPath,
-      version: install.installationVersion ?? '',
-      displayName: install.displayName ?? 'Visual Studio',
+      installationPath,
+      version: typeof install.installationVersion === 'string' ? install.installationVersion : '',
+      displayName: typeof install.displayName === 'string' ? install.displayName : 'Visual Studio',
       hasMSVC: true,
-      hasWindowsSDK: await checkWindowsSDK(install.installationPath),
+      hasWindowsSDK: await checkWindowsSDK(installationPath),
     };
   } catch {
     return undefined;
@@ -100,7 +103,7 @@ async function checkWindowsSDK(installPath: string): Promise<boolean> {
       'json',
       '-utf8',
     ]);
-    const installations = JSON.parse(result.stdout);
+    const installations = parseJsonValue<unknown[]>(result.stdout, 'vswhere Windows SDK output');
     return Array.isArray(installations) && installations.length > 0;
   } catch {
     return false;

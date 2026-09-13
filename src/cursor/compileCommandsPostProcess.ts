@@ -2,6 +2,7 @@ import { randomBytes } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileExists } from '../platform/paths';
+import { parseJsonValue } from '../parsers/safeJson';
 
 export interface CompileCommandEntry {
   file: string;
@@ -1334,7 +1335,7 @@ export async function isCompileCommandsStale(
   let entries: CompileCommandEntry[];
   try {
     const raw = await fs.promises.readFile(compileDbPath, 'utf-8');
-    entries = JSON.parse(raw) as CompileCommandEntry[];
+    entries = parseJsonValue<CompileCommandEntry[]>(raw, compileDbPath);
   } catch {
     return true;
   }
@@ -1372,7 +1373,7 @@ export async function isCompileCommandsStale(
 export async function loadCompileCommands(projectRoot: string): Promise<CompileCommandEntry[]> {
   const compileDbPath = path.join(projectRoot, 'compile_commands.json');
   const raw = await fs.promises.readFile(compileDbPath, 'utf-8');
-  const parsed = JSON.parse(raw);
+  const parsed = parseJsonValue<unknown>(raw, compileDbPath);
   if (!Array.isArray(parsed)) {
     throw new Error('compile_commands.json is not an array');
   }
