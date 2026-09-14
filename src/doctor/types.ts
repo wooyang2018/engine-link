@@ -55,6 +55,7 @@ export interface DoctorRun {
   baselineRunId?: string;
   progress: { phase: string; completed: number; total: number };
   coverage: Record<string, DoctorCoverage>;
+  engineLink?: Record<string, unknown>;
   host?: Record<string, unknown>;
   editor: Record<string, unknown>;
   build: Record<string, unknown>;

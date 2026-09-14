@@ -63,6 +63,16 @@ function validateRunId(runId: string): void {
 }
 
 function renderMarkdown(run: DoctorRun): string {
+  const counts = {
+    total: run.issues.length,
+    p0: run.issues.filter((issue) => issue.severity === 'P0').length,
+    p1: run.issues.filter((issue) => issue.severity === 'P1').length,
+    p2: run.issues.filter((issue) => issue.severity === 'P2').length,
+    confirmed: run.issues.filter((issue) => issue.confidence === 'confirmed').length,
+    inferred: run.issues.filter((issue) => issue.confidence === 'inferred').length,
+    unconfirmed: run.issues.filter((issue) => issue.confidence === 'unconfirmed').length,
+  };
+  const history = Array.isArray(run.build.history) ? run.build.history : [];
   const lines = [
     `# EngineLink Project Doctor ${run.id}`,
     '',
@@ -73,9 +83,13 @@ function renderMarkdown(run: DoctorRun): string {
     `- Finished: ${run.finishedAt ?? 'running'}`,
     `- Conclusion: ${run.conclusion ?? 'Pending'}`,
     `- Checks complete: ${run.summary?.checksComplete ?? false}`,
-    `- Findings: ${run.summary?.total ?? run.issues.length} (P0 ${run.summary?.p0 ?? 0}, P1 ${run.summary?.p1 ?? 0}, P2 ${run.summary?.p2 ?? 0})`,
-    `- Confidence: confirmed ${run.summary?.confirmed ?? 0}, inferred ${run.summary?.inferred ?? 0}, unconfirmed ${run.summary?.unconfirmed ?? 0}`,
+    `- Findings: ${counts.total} (P0 ${counts.p0}, P1 ${counts.p1}, P2 ${counts.p2})`,
+    `- Confidence: confirmed ${counts.confirmed}, inferred ${counts.inferred}, unconfirmed ${counts.unconfirmed}`,
     `- Blocking issues: ${run.summary?.hasBlockingIssues ?? false}`,
+    '',
+    '## EngineLink runtime',
+    '',
+    `- Identity: ${JSON.stringify(run.engineLink ?? null)}`,
     '',
     '## Coverage',
     '',
@@ -84,7 +98,14 @@ function renderMarkdown(run: DoctorRun): string {
     '## Build evidence',
     '',
     `- Authoritative: ${JSON.stringify(run.build.authoritative ?? null)}`,
-    `- History: ${JSON.stringify(run.build.history ?? [])}`,
+    '',
+    `<details><summary>History (${history.length} candidates)</summary>`,
+    '',
+    '```json',
+    JSON.stringify(history, null, 2),
+    '```',
+    '',
+    '</details>',
     '',
     '## Scenarios',
     '',

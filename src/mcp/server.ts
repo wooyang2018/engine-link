@@ -4,11 +4,12 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { EngineLinkService } from '../core/service';
 import { TOOL_DEFINITIONS } from './tools';
+import { ENGINE_LINK_VERSION } from '../runtimeIdentity';
 
 const projectPath = getOption('--project') ?? process.env.ENGINELINK_PROJECT ?? process.cwd();
 const service = new EngineLinkService(projectPath);
 const server = new Server(
-  { name: 'enginelink', version: '0.2.0' },
+  { name: 'enginelink', version: ENGINE_LINK_VERSION },
   { capabilities: { tools: {} } },
 );
 

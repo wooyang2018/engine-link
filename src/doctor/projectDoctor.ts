@@ -23,6 +23,7 @@ import { parseJsonValue, SafeJsonError } from '../parsers/safeJson';
 import { DoctorEvidenceError } from './evidence';
 import { candidateFromRecord, selectBuildEvidence, type BuildEvidenceSelection } from './buildEvidence';
 import { executeDoctorScenario } from './scenarioRunner';
+import { getRuntimeIdentity } from '../runtimeIdentity';
 
 export interface DoctorEditorProcess {
   running: boolean;
@@ -63,7 +64,7 @@ export class ProjectDoctor {
       startedAt: new Date().toISOString(), project: ctx.project.uprojectPath, projectRoot: ctx.projectRoot,
       requestedPaths: paths, referenceQueries, scenarioNames, baselineRunId: options.baselineRunId,
       progress: { phase: 'queued', completed: 0, total: mode === 'scenario' ? 4 : mode === 'changed' ? 4 : 2 },
-      coverage: {}, editor: {}, build: {}, issues: [], artifacts: [], scenarios: [],
+      coverage: {}, engineLink: await getRuntimeIdentity(), editor: {}, build: {}, issues: [], artifacts: [], scenarios: [],
     };
     await store.save(run);
     const controller = new AbortController();

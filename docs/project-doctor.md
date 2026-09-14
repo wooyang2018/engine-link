@@ -20,7 +20,7 @@ Reports and raw evidence are written beneath `Saved/EngineLink/Doctor/Runs/<run-
 
 `summary` always records `total`, the P0/P1/P2 and confirmed/inferred/unconfirmed counts, `checksComplete`, `hasFindings`, and `hasBlockingIssues`. The CLI exits 0 for `passed` and `passed_with_findings`, and 1 for every other terminal status. There is deliberately no legacy status/schema translation because Doctor has not been released.
 
-Build evidence contains one `authoritative` candidate and a separate `history` list. Only a real succeeded/failed build for the same project, current session/build-and-launch window, and source state can be authoritative. Blocked, running, skipped, stale, old-PID, old-session, and superseded records stay in history and do not affect status. Multiple Editors for the same project make the run incomplete before MCP or PIE work begins.
+Build evidence contains one `authoritative` candidate and a separate `history` list. Only a real succeeded/failed build for the same project, current session/build-and-launch window, and source state can be authoritative. Blocked, running, skipped, stale, old-PID, old-session, and superseded records stay in history and do not affect status. Markdown reports show history in a collapsed details section. Multiple Editors for the same project make the run incomplete before MCP or PIE work begins. Every environment and Doctor report also records the EngineLink version, server PID, process start time, bundle path, and bundle modification time so stale MCP processes are visible.
 
 ## Project configuration
 
@@ -92,21 +92,23 @@ Scenario files combine VibeUE WorkflowService actions with EngineLink Doctor act
     { "action": "start_pie" },
     { "action": "wait_for_pie", "timeout_seconds": 30 },
     { "action": "wait_for_local_players", "count": 1, "timeoutMs": 20000 },
-    { "action": "input_action_bound", "context": "/Game/Input/IMC_Default.IMC_Default", "path": "/Game/Input/IA_Move.IA_Move", "key": "W" },
-    { "action": "snapshot_player", "name": "before" },
-    { "action": "inject_action", "path": "/Game/Input/IA_Move.IA_Move", "value": { "type": "Axis2D", "x": 0, "y": 1 }, "repeat": 20, "intervalMs": 16 },
+    { "action": "input_action_bound", "clientIndex": 0, "context": "/Game/Input/IMC_Default.IMC_Default", "path": "/Game/Input/IA_Move.IA_Move", "key": "W" },
+    { "action": "snapshot_player", "clientIndex": 0, "name": "before" },
+    { "action": "inject_action", "clientIndex": 0, "path": "/Game/Input/IA_Move.IA_Move", "value": { "type": "Axis2D", "x": 0, "y": 1 }, "repeat": 20, "intervalMs": 16 },
     { "action": "wait", "seconds": 0.25 },
-    { "action": "snapshot_player", "name": "after" },
-    { "action": "actor_location_changed", "from": "before", "to": "after", "minDistance": 10 },
+    { "action": "snapshot_player", "clientIndex": 0, "name": "after" },
+    { "action": "actor_location_changed", "clientIndex": 0, "from": "before", "to": "after", "minDistance": 10 },
     { "action": "capture_game", "name": "after-jump" }
   ],
   "teardown": { "stop_pie": true }
 }
 ```
 
-`inject_action` retains the one-shot `path + x/y/z` form. `value` accepts Boolean, Axis1D, Axis2D, or Axis3D values. `repeat` and `durationMs` are mutually exclusive; `intervalMs`, `duration_ms`, and `interval_ms` are accepted. Duration is capped at 300 seconds and injection count at 10,000. Repeated/duration input releases to zero by default; one-shot input retains its prior non-release behavior. Cancellation, timeout, or PIE failure triggers an emergency release attempt.
+`clientIndex` is the zero-based interactive PIE client-window ordinal and defaults to `0`. EngineLink excludes windowless dedicated-server worlds, sorts the remaining PIE worlds by raw PIE instance ID, and records both identities. It applies to `inject_action`, `snapshot_player`, input binding checks, player assertions, and GameplayTag assertions. `wait_for_local_players.count` counts only those interactive client windows. `input_action_bound.timeoutMs` optionally waits for a newly created client's mapping context and Enhanced Input component to finish initializing.
 
-EngineLink actions are `wait_for_local_players`, `snapshot_player`, `actor_location_changed`, `actor_rotation_changed`, `control_rotation_changed`, `control_rotation_in_range`, `player_camera_pitch_limits`, `input_action_bound`, `gameplay_tag_present`, and `gameplay_tag_absent`. Failure evidence includes the map, LocalPlayer/Pawn data, input parameters and actual count, before/after snapshots, failed assertion, captures, and teardown result. See `examples/doctor/scenarios/input-camera-smoke.json` for a copyable scenario.
+`inject_action` retains the one-shot `path + x/y/z` form. `value` accepts Boolean, Axis1D, Axis2D, or Axis3D values. `repeat` and `durationMs` are mutually exclusive; `intervalMs`, `duration_ms`, and `interval_ms` are accepted. Duration is capped at 300 seconds and injection count at 10,000. Each actual call records its timestamp, value, client identity, and outcome. Repeated/duration input releases to zero by default; one-shot input retains its prior non-release behavior. Cancellation, timeout, or PIE failure triggers an emergency release on the original target client.
+
+EngineLink actions are `wait_for_local_players`, `snapshot_player`, `actor_location_changed`, `actor_rotation_changed`, `control_rotation_changed`, `control_rotation_unchanged`, `control_rotation_in_range`, `player_camera_pitch_limits`, `input_action_bound`, `gameplay_tag_present`, and `gameplay_tag_absent`. These host actions are never forwarded into a VibeUE-native scenario segment. Failure evidence includes the map, LocalPlayer/Pawn data, input parameters and actual count, per-attempt target evidence, before/after snapshots, failed assertion, captures, and the independently recorded input-release, PIE-stop, and environment-restore teardown results. See `examples/doctor/scenarios/input-camera-smoke.json` for a copyable scenario.
 
 ## JSON and MCP evidence
 

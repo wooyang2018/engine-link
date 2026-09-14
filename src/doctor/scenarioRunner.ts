@@ -7,6 +7,7 @@ import { parseJsonValue } from '../parsers/safeJson';
 
 interface InjectionRecord {
   action: string;
+  clientIndex: number;
   valueType: 'Boolean' | 'Axis1D' | 'Axis2D' | 'Axis3D';
   value: { x: number; y: number; z: number };
   plannedCount: number;
@@ -16,6 +17,8 @@ interface InjectionRecord {
   endedAt?: string;
   releaseRequested: boolean;
   released: boolean;
+  target?: Record<string, unknown>;
+  attempts: Array<Record<string, unknown>>;
   error?: string;
 }
 
@@ -47,6 +50,7 @@ export async function executeDoctorScenario(
   };
   const activeActions = new Map<string, InjectionRecord>();
   let snapshot: Record<string, unknown> | undefined;
+  let pieOwned = false;
   let vibeRunId = '';
   let result: DoctorScenarioResult;
   try {
@@ -60,6 +64,7 @@ export async function executeDoctorScenario(
       if (!native.length) return;
       const steps = native.splice(0);
       const report = await runNativeSegment(gateway, spec, steps, signal, heartbeatCheck);
+      if (steps.some((step) => step.action === 'start_pie')) pieOwned = true;
       evidence.segments.push(report);
       evidence.captures.push(...artifactPaths(report.captures, projectRoot));
     };
@@ -99,7 +104,7 @@ export async function executeDoctorScenario(
       if (error.raw !== undefined) evidence.rawResponses = [error.raw];
     }
   } finally {
-    evidence.teardown = await teardown(gateway, snapshot, [...activeActions.values()], heartbeatCheck);
+    evidence.teardown = await teardown(gateway, snapshot, [...activeActions.values()], pieOwned, heartbeatCheck);
     if (evidence.teardown.succeeded !== true) {
       result!.status = signal.aborted ? 'cancelled' : result!.status === 'incomplete' ? 'incomplete' : 'failed';
       result!.error = `${result!.error ? `${result!.error}; ` : ''}teardown failed: ${String(evidence.teardown.error ?? 'unknown error')}`;
@@ -111,49 +116,61 @@ export async function executeDoctorScenario(
 function validateScenarioLimits(spec: DoctorScenarioSpec): void {
   if (!spec.map.startsWith('/Game/')) throw new Error(`Scenario map must be a /Game asset path: ${spec.map}`);
   if (!Number.isInteger(spec.clients) || spec.clients < 1 || spec.clients > 16) throw new Error('Scenario clients must be between 1 and 16.');
-  for (const step of spec.steps.filter((item) => item.action === 'inject_action')) normalizeDoctorInjection(step);
+  for (const step of spec.steps) {
+    if (step.action === 'inject_action') normalizeDoctorInjection(step, spec.clients);
+    else if (isTargetedHostAction(step.action)) normalizeClientIndex(step, spec.clients);
+  }
 }
 
 function isHostAction(action: unknown): boolean {
   return ['wait_for_local_players', 'snapshot_player', 'actor_location_changed', 'actor_rotation_changed',
-    'control_rotation_changed', 'control_rotation_in_range', 'player_camera_pitch_limits', 'input_action_bound',
+    'control_rotation_changed', 'control_rotation_unchanged', 'control_rotation_in_range', 'player_camera_pitch_limits', 'input_action_bound',
     'gameplay_tag_present', 'gameplay_tag_absent'].includes(String(action));
+}
+
+function isTargetedHostAction(action: unknown): boolean {
+  return isHostAction(action) && action !== 'wait_for_local_players';
 }
 
 async function injectAction(
   gateway: UnrealMcpGateway, spec: DoctorScenarioSpec, step: Record<string, unknown>, evidence: ScenarioEvidence,
   active: Map<string, InjectionRecord>, signal: AbortSignal, heartbeatCheck: () => Promise<void>,
 ): Promise<void> {
-  const normalized = normalizeDoctorInjection(step);
+  const normalized = normalizeDoctorInjection(step, spec.clients);
   if ((normalized.count > 1 || normalized.durationMs !== undefined) && !await isPieRunning(gateway)) {
     throw new Error('Repeated or duration inject_action requires a running PIE session.');
   }
   const record: InjectionRecord = {
-    action: normalized.path, valueType: normalized.valueType, value: normalized.value,
+    action: normalized.path, clientIndex: normalized.clientIndex, valueType: normalized.valueType, value: normalized.value,
     plannedCount: normalized.count, actualCount: 0, intervalMs: normalized.intervalMs,
-    startedAt: new Date().toISOString(), releaseRequested: normalized.release, released: false,
+    startedAt: new Date().toISOString(), releaseRequested: normalized.release, released: false, attempts: [],
   };
   evidence.injections.push(record);
-  active.set(record.action, record);
+  active.set(`${record.clientIndex}:${record.action}`, record);
   try {
-    const batchSize = 100;
-    for (let offset = 0; offset < normalized.count; offset += batchSize) {
+    for (let index = 0; index < normalized.count; index++) {
       throwIfCancelled(signal);
-      const count = Math.min(batchSize, normalized.count - offset);
-      const steps: Array<Record<string, unknown>> = [];
-      for (let index = 0; index < count; index++) {
-        steps.push({ action: 'inject_action', path: normalized.path, x: normalized.value.x, y: normalized.value.y, z: normalized.value.z });
-        if (normalized.intervalMs > 0 && offset + index + 1 < normalized.count) steps.push({ action: 'wait', seconds: normalized.intervalMs / 1000 });
+      const attemptedAt = new Date().toISOString();
+      try {
+        const injected = await injectActionOnce(gateway, normalized.path, normalized.value, normalized.clientIndex, heartbeatCheck);
+        record.target = isRecord(injected.target) ? injected.target : record.target;
+        record.attempts.push({ index, attemptedAt, ...injected });
+        if (injected.success !== true) throw new Error(String(injected.error ?? 'Targeted input injection failed.'));
+        record.actualCount++;
+      } catch (error) {
+        if (!record.attempts.some((item) => item.index === index)) {
+          record.attempts.push({ index, attemptedAt, success: false, error: error instanceof Error ? error.message : String(error) });
+        }
+        throw error;
       }
-      await runNativeSegment(gateway, spec, steps, signal, heartbeatCheck);
-      record.actualCount += count;
+      if (normalized.intervalMs > 0 && index + 1 < normalized.count) await delay(normalized.intervalMs);
     }
     if (normalized.durationMs !== undefined) {
       const tailMs = Math.max(0, normalized.durationMs - Math.max(0, normalized.count - 1) * normalized.intervalMs);
       if (tailMs > 0) await delay(tailMs);
     }
-    if (normalized.release) record.released = await releaseAction(gateway, spec, normalized.path, signal, heartbeatCheck);
-    active.delete(record.action);
+    if (normalized.release) record.released = await releaseAction(gateway, normalized.path, normalized.clientIndex, signal, heartbeatCheck);
+    active.delete(`${record.clientIndex}:${record.action}`);
   } catch (error) {
     record.error = error instanceof Error ? error.message : String(error);
     throw error;
@@ -162,7 +179,7 @@ async function injectAction(
   }
 }
 
-export function normalizeDoctorInjection(step: Record<string, unknown>) {
+export function normalizeDoctorInjection(step: Record<string, unknown>, clients = 16) {
   const action = String(step.path ?? '');
   if (!action.startsWith('/Game/')) throw new Error('inject_action.path must be a /Game asset path.');
   const repeatValue = step.repeat;
@@ -175,7 +192,11 @@ export function normalizeDoctorInjection(step: Record<string, unknown>) {
   const count = durationMs === undefined ? repeat ?? 1 : Math.min(10_000, Math.max(1, Math.ceil(durationMs / intervalMs)));
   const value = normalizeActionValue(step.value, step.x, step.y, step.z);
   const release = typeof step.release === 'boolean' ? step.release : count > 1 || durationMs !== undefined;
-  return { path: action, intervalMs, durationMs, count, release, ...value };
+  return { path: action, clientIndex: normalizeClientIndex(step, clients), intervalMs, durationMs, count, release, ...value };
+}
+
+function normalizeClientIndex(step: Record<string, unknown>, clients: number): number {
+  return integerInRange(step.clientIndex ?? step.client_index ?? 0, 'clientIndex', 0, Math.max(0, clients - 1));
 }
 
 function normalizeActionValue(input: unknown, legacyX: unknown, legacyY: unknown, legacyZ: unknown) {
@@ -215,7 +236,15 @@ async function runHostAction(gateway: UnrealMcpGateway, step: Record<string, unk
     evidence.snapshots[name] = await samplePlayer(gateway, step, heartbeatCheck);
     return;
   }
-  const actual = await samplePlayer(gateway, step, heartbeatCheck);
+  let actual = await samplePlayer(gateway, step, heartbeatCheck);
+  if (action === 'input_action_bound') {
+    const deadline = Date.now() + numberInRange(step.timeoutMs ?? step.timeout_ms ?? 1, 'timeoutMs', 1, 300_000);
+    while (!inputActionBound(actual) && Date.now() < deadline) {
+      throwIfCancelled(signal);
+      await delay(100);
+      actual = await samplePlayer(gateway, step, heartbeatCheck);
+    }
+  }
   const from = evidence.snapshots[String(step.from ?? 'before')];
   const to = step.to ? evidence.snapshots[String(step.to)] : actual;
   let passed = false;
@@ -223,14 +252,15 @@ async function runHostAction(gateway: UnrealMcpGateway, step: Record<string, unk
   if (action === 'actor_location_changed') passed = changedAmount(from?.location, to?.location, step.axis) >= Number(step.minDelta ?? step.min_delta ?? step.minDistance ?? step.min_distance ?? 1);
   else if (action === 'actor_rotation_changed') passed = changedAmount(from?.actorRotation, to?.actorRotation, step.axis) >= Number(step.minDegrees ?? step.min_degrees ?? 1);
   else if (action === 'control_rotation_changed') passed = changedAmount(from?.controlRotation, to?.controlRotation, step.axis) >= Number(step.minDegrees ?? step.min_degrees ?? 1);
+  else if (action === 'control_rotation_unchanged') passed = changedAmount(from?.controlRotation, to?.controlRotation, step.axis) <= Number(step.maxDegrees ?? step.max_degrees ?? 0.01);
   else if (action === 'control_rotation_in_range') {
-    const pitch = component(to?.controlRotation, 'pitch');
+    const pitch = signedDegrees(component(to?.controlRotation, 'pitch'));
     passed = pitch >= Number(step.min) && pitch <= Number(step.max);
   } else if (action === 'player_camera_pitch_limits') {
     const limits = isRecord(actual.cameraPitchLimits) ? actual.cameraPitchLimits : {};
     passed = nearly(Number(limits.min), Number(step.min)) && nearly(Number(limits.max), Number(step.max));
   } else if (action === 'input_action_bound') {
-    passed = actual.mappingContextApplied === true && actual.mappingContainsAction === true && actual.mappingContainsKey === true && actual.enhancedInputComponent === true;
+    passed = inputActionBound(actual);
   } else if (action === 'gameplay_tag_present' || action === 'gameplay_tag_absent') {
     const present = Array.isArray(actual.gameplayTags) && actual.gameplayTags.map(String).includes(String(step.tag));
     passed = action === 'gameplay_tag_present' ? present : !present;
@@ -243,20 +273,21 @@ async function runHostAction(gateway: UnrealMcpGateway, step: Record<string, unk
 async function samplePlayer(gateway: UnrealMcpGateway, step: Record<string, unknown>, heartbeatCheck: () => Promise<void>): Promise<Record<string, unknown>> {
   await heartbeatCheck();
   const payload = Buffer.from(JSON.stringify({
-    playerIndex: Number(step.playerIndex ?? step.player_index ?? 0), context: step.context, action: step.path ?? step.inputAction,
+    clientIndex: Number(step.clientIndex ?? step.client_index ?? 0), context: step.context, action: step.path ?? step.inputAction,
     key: step.key, tag: step.tag,
   }), 'utf8').toString('base64');
-  const script = `import unreal, json, base64
+  const script = `import unreal, json, base64, re
 request = json.loads(base64.b64decode("${payload}").decode("utf-8"))
-players = [p for p in unreal.ObjectIterator(unreal.LocalPlayer) if p.get_world() is not None]
-result = {"localPlayers":len(players)}
-index = int(request.get("playerIndex", 0))
-if index < len(players):
-    player = players[index]; controller = player.get_player_controller(player.get_world()); pawn = controller.get_pawn() if controller else None
-    result["localPlayer"] = player.get_path_name(); result["controller"] = controller.get_path_name() if controller else ""
+${clientResolverPython()}
+clients = enginelink_clients()
+result = {"localPlayers":len(clients),"clients":[item["identity"] for item in clients]}
+index = int(request.get("clientIndex", 0))
+if index < len(clients):
+    selected = clients[index]; player = selected["player"]; controller = selected["controller"]; pawn = controller.get_controlled_pawn() if controller else None
+    result.update(selected["identity"])
     if pawn:
         loc = pawn.get_actor_location(); rot = pawn.get_actor_rotation()
-        result["pawn"] = pawn.get_path_name(); result["pawnClass"] = pawn.get_class().get_path_name()
+        result["pawnClass"] = pawn.get_class().get_path_name()
         result["location"] = {"x":loc.x,"y":loc.y,"z":loc.z}; result["actorRotation"] = {"pitch":rot.pitch,"yaw":rot.yaw,"roll":rot.roll}
         component = pawn.get_component_by_class(unreal.EnhancedInputComponent); result["enhancedInputComponent"] = component is not None
         try:
@@ -269,15 +300,16 @@ if index < len(players):
         if camera: result["cameraPitchLimits"] = {"min":camera.view_pitch_min,"max":camera.view_pitch_max}
     context_path = request.get("context")
     if context_path:
-        context = unreal.load_object(None, context_path); subsystem = unreal.SubsystemBlueprintLibrary.get_local_player_subsystem(player, unreal.EnhancedInputLocalPlayerSubsystem)
+        context = unreal.load_object(None, context_path); subsystem = selected["subsystem"]
         result["mappingContextApplied"] = bool(context and subsystem and subsystem.has_mapping_context(context))
         result["mappingContainsAction"] = False; result["mappingContainsKey"] = False
         if context:
             wanted_action = str(request.get("action") or "").split(".")[0]; wanted_key = str(request.get("key") or "")
             try:
-                for mapping in context.get_editor_property("Mappings"):
+                mapping_data = context.get_editor_property("DefaultKeyMappings")
+                for mapping in mapping_data.get_editor_property("Mappings"):
                     action_path = mapping.get_editor_property("Action").get_path_name() if mapping.get_editor_property("Action") else ""
-                    key_name = str(mapping.get_editor_property("Key"))
+                    key_name = str(mapping.get_editor_property("Key").get_editor_property("KeyName"))
                     if action_path.split(".")[0] == wanted_action: result["mappingContainsAction"] = True
                     if action_path.split(".")[0] == wanted_action and wanted_key and wanted_key.lower() in key_name.lower(): result["mappingContainsKey"] = True
             except Exception as exc: result["mappingReadError"] = str(exc)
@@ -341,13 +373,42 @@ async function isPieRunning(gateway: UnrealMcpGateway): Promise<boolean> {
   return callEvidence<Record<string, unknown>>(output, 'PIE input precondition').value.pieRunning === true;
 }
 
+async function injectActionOnce(
+  gateway: UnrealMcpGateway,
+  action: string,
+  value: { x: number; y: number; z: number },
+  clientIndex: number,
+  heartbeatCheck: () => Promise<void>,
+): Promise<Record<string, unknown>> {
+  await heartbeatCheck();
+  const encoded = Buffer.from(JSON.stringify({ action, value, clientIndex }), 'utf8').toString('base64');
+  const code = `import unreal, json, base64, re
+request=json.loads(base64.b64decode("${encoded}").decode("utf-8"))
+${clientResolverPython()}
+clients=enginelink_clients(); index=int(request.get("clientIndex",0)); result={"success":False,"clientIndex":index}
+try:
+    if index < 0 or index >= len(clients): raise RuntimeError("PIE clientIndex %d is unavailable; found %d interactive client window(s)" % (index,len(clients)))
+    selected=clients[index]; action=unreal.load_object(None,request["action"])
+    if not action: raise RuntimeError("Input Action not found: " + request["action"])
+    value=request["value"]; selected["subsystem"].inject_input_vector_for_action(action,unreal.Vector(float(value["x"]),float(value["y"]),float(value["z"])),[],[])
+    result={"success":True,"clientIndex":index,"returnValue":None,"target":selected["identity"]}
+except Exception as exc: result={"success":False,"clientIndex":index,"error":str(exc),"availableClients":[item["identity"] for item in clients]}
+print("ENGINELINK_DOCTOR_RESULT="+json.dumps(result,separators=(",",":"),default=str))`;
+  return callEvidence<Record<string, unknown>>(
+    await gateway.call('execute_python_code', { code }, { timeoutMs: 5_000, retry: false }),
+    'targeted input injection',
+  ).value;
+}
+
 async function cancelSegment(gateway: UnrealMcpGateway, id: string): Promise<void> {
   const encoded = Buffer.from(id).toString('base64');
   await gateway.call('execute_python_code', { code: `import unreal, base64\nid=base64.b64decode("${encoded}").decode("utf-8")\nprint("ENGINELINK_DOCTOR_RESULT=" + unreal.WorkflowService.cancel_scenario(id))` }, { timeoutMs: 5_000, retry: false });
 }
 
-async function releaseAction(gateway: UnrealMcpGateway, spec: DoctorScenarioSpec, action: string, signal: AbortSignal | undefined, heartbeatCheck: () => Promise<void>): Promise<boolean> {
-  await runNativeSegment(gateway, spec, [{ action: 'inject_action', path: action, x: 0, y: 0, z: 0 }], signal ?? new AbortController().signal, heartbeatCheck);
+async function releaseAction(gateway: UnrealMcpGateway, action: string, clientIndex: number, signal: AbortSignal | undefined, heartbeatCheck: () => Promise<void>): Promise<boolean> {
+  if (signal) throwIfCancelled(signal);
+  const released = await injectActionOnce(gateway, action, { x: 0, y: 0, z: 0 }, clientIndex, heartbeatCheck);
+  if (released.success !== true) throw new Error(String(released.error ?? 'Targeted input release failed.'));
   return true;
 }
 
@@ -371,34 +432,75 @@ print("ENGINELINK_DOCTOR_RESULT="+json.dumps(snapshot,separators=(",",":")))`;
   return callEvidence<Record<string, unknown>>(await gateway.call('execute_python_code', { code }, { timeoutMs: 15_000, retry: false }), 'scenario setup').value;
 }
 
-async function teardown(gateway: UnrealMcpGateway, snapshot: Record<string, unknown> | undefined, actions: InjectionRecord[], heartbeatCheck: () => Promise<void>): Promise<Record<string, unknown>> {
-  const result: Record<string, unknown> = { attempted: true, releases: [] };
-  try {
-    await heartbeatCheck();
-    for (const action of actions) {
-      try {
-        const zero = Buffer.from(JSON.stringify({ path: action.action })).toString('base64');
-        const output = await gateway.call('execute_python_code', { code: `import unreal, json, base64\nd=json.loads(base64.b64decode("${zero}").decode("utf-8"))\nr=json.loads(unreal.InputService.inject_action(d["path"],0.0,0.0,0.0))\nprint("ENGINELINK_DOCTOR_RESULT="+json.dumps({"released":bool(r.get("success",False)),"error":r.get("error","")},separators=(",",":")))` }, { timeoutMs: 5_000, retry: false });
-        const released = callEvidence<Record<string, unknown>>(output, 'emergency input release').value;
-        action.released = released.released === true; (result.releases as unknown[]).push({ action: action.action, ...released });
-      } catch (error) { (result.releases as unknown[]).push({ action: action.action, released: false, error: String(error) }); }
+async function teardown(
+  gateway: UnrealMcpGateway,
+  snapshot: Record<string, unknown> | undefined,
+  actions: InjectionRecord[],
+  pieOwned: boolean,
+  heartbeatCheck: () => Promise<void>,
+): Promise<Record<string, unknown>> {
+  const releases: Array<Record<string, unknown>> = [];
+  const errors: string[] = [];
+  for (const action of actions) {
+    try {
+      const released = await injectActionOnce(gateway, action.action, { x: 0, y: 0, z: 0 }, action.clientIndex, heartbeatCheck);
+      action.released = released.success === true;
+      releases.push({ action: action.action, clientIndex: action.clientIndex, released: action.released, target: released.target, error: released.error });
+      if (!action.released) errors.push(`release ${action.action} on client ${action.clientIndex}: ${String(released.error ?? 'failed')}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      releases.push({ action: action.action, clientIndex: action.clientIndex, released: false, error: message });
+      errors.push(`release ${action.action} on client ${action.clientIndex}: ${message}`);
     }
-    const encoded = Buffer.from(JSON.stringify(snapshot ?? {})).toString('base64');
-    const code = `import unreal, json, base64, vibeue
+  }
+
+  const pieStop: Record<string, unknown> = { owned: pieOwned, requested: false, stopped: !pieOwned };
+  if (pieOwned) {
+    try {
+      await heartbeatCheck();
+      const output = await gateway.call('execute_python_code', {
+        code: 'import unreal, json, vibeue\nrunning=bool(vibeue.exec_tool("EditorToolset.EditorAppToolset","IsPIERunning"))\nif running: vibeue.exec_tool("EditorToolset.EditorAppToolset","StopPIE")\nprint("ENGINELINK_DOCTOR_RESULT="+json.dumps({"requested":running},separators=(",",":")))',
+      }, { timeoutMs: 5_000, retry: false });
+      pieStop.requested = callEvidence<Record<string, unknown>>(output, 'request PIE teardown').value.requested === true;
+      const deadline = Date.now() + 15_000;
+      while (await isPieRunning(gateway)) {
+        if (Date.now() >= deadline) throw new Error('PIE teardown did not complete within 15 seconds.');
+        await delay(100);
+        await heartbeatCheck();
+      }
+      pieStop.stopped = true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      pieStop.error = message;
+      errors.push(`PIE stop: ${message}`);
+    }
+  }
+
+  const environmentRestore: Record<string, unknown> = { attempted: snapshot !== undefined, succeeded: snapshot === undefined };
+  if (snapshot) {
+    try {
+      const encoded = Buffer.from(JSON.stringify(snapshot)).toString('base64');
+      const code = `import unreal, json, base64
 snapshot=json.loads(base64.b64decode("${encoded}").decode("utf-8"))
-if vibeue.exec_tool("EditorToolset.EditorAppToolset","IsPIERunning"): vibeue.exec_tool("EditorToolset.EditorAppToolset","StopPIE")
-if vibeue.exec_tool("EditorToolset.EditorAppToolset","IsPIERunning"): raise RuntimeError("PIE teardown did not stop the EngineLink-owned session")
 settings_class=unreal.load_class(None,"/Script/UnrealEd.LevelEditorPlaySettings"); settings=unreal.get_default_object(settings_class)
 if "clients" in snapshot: settings.set_editor_property("PlayNumberOfClients",int(snapshot["clients"]))
 restored=json.loads(unreal.PerformanceService.set_background_throttling(bool(snapshot.get("backgroundThrottling",True))))
 if not restored.get("success",False): raise RuntimeError(restored.get("error","Unable to restore throttling"))
 world=unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world(); current=world.get_outermost().get_name() if world else ""
 if snapshot.get("map") and current != snapshot["map"] and not unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).load_level(snapshot["map"]): raise RuntimeError("Unable to restore map")
-print("ENGINELINK_DOCTOR_RESULT={\\"succeeded\\":true}")`;
-    const restored = callEvidence<Record<string, unknown>>(await gateway.call('execute_python_code', { code }, { timeoutMs: 15_000, retry: false }), 'scenario teardown').value;
-    result.succeeded = restored.succeeded === true;
-  } catch (error) { result.succeeded = false; result.error = error instanceof Error ? error.message : String(error); }
-  return result;
+print("ENGINELINK_DOCTOR_RESULT="+json.dumps({"succeeded":True,"map":snapshot.get("map"),"clients":snapshot.get("clients"),"backgroundThrottling":snapshot.get("backgroundThrottling")},separators=(",",":")))`;
+      Object.assign(environmentRestore, callEvidence<Record<string, unknown>>(
+        await gateway.call('execute_python_code', { code }, { timeoutMs: 15_000, retry: false }),
+        'scenario environment restore',
+      ).value);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      environmentRestore.succeeded = false;
+      environmentRestore.error = message;
+      errors.push(`environment restore: ${message}`);
+    }
+  }
+  return { attempted: true, succeeded: errors.length === 0, releases, pieStop, environmentRestore, ...(errors.length ? { error: errors.join('; ') } : {}) };
 }
 
 async function assertScenarioHeartbeat(projectRoot: string): Promise<void> {
@@ -445,6 +547,28 @@ async function finishRun(gateway: UnrealMcpGateway, id: string, outcome: string,
   await gateway.call('execute_python_code', { code: `import unreal, json, base64\nd=json.loads(base64.b64decode("${encoded}").decode("utf-8"))\nprint("ENGINELINK_DOCTOR_RESULT="+unreal.WorkflowService.finish_run(d["id"],d["outcome"],d["summary"]))` }, { retry: false });
 }
 
+function clientResolverPython(): string {
+  return `def enginelink_clients():
+    found=[]
+    players=[player for player in unreal.ObjectIterator(unreal.LocalPlayer) if player.get_world() is not None]
+    subsystems=[subsystem for subsystem in unreal.ObjectIterator(unreal.EnhancedInputLocalPlayerSubsystem) if subsystem.get_world() is not None]
+    for world in unreal.ObjectIterator(unreal.World):
+        package_name=world.get_outermost().get_name()
+        match=re.search(r"(?:^|/)UEDPIE_(\\d+)_",package_name)
+        if not match: continue
+        controller=unreal.GameplayStatics.get_player_controller(world,0)
+        if not controller or not controller.is_local_player_controller(): continue
+        player=next((candidate for candidate in players if candidate.get_world()==world),None)
+        subsystem=next((candidate for candidate in subsystems if candidate.get_world()==world),None)
+        if not player or not subsystem: continue
+        found.append({"pieInstanceId":int(match.group(1)),"world":world,"player":player,"controller":controller,"subsystem":subsystem})
+    found.sort(key=lambda item:item["pieInstanceId"])
+    for index,item in enumerate(found):
+        pawn=item["controller"].get_controlled_pawn()
+        item["identity"]={"clientIndex":index,"pieInstanceId":item["pieInstanceId"],"world":item["world"].get_path_name(),"localPlayer":item["player"].get_path_name(),"controller":item["controller"].get_path_name(),"pawn":pawn.get_path_name() if pawn else ""}
+    return found`;
+}
+
 function callEvidence<T>(output: McpToolOutput, source: string) {
   if (output.isError) throw new Error(output.text || `${source} failed.`);
   const evidence = resolveDoctorEvidence<T>(output, source);
@@ -469,6 +593,10 @@ function changedAmount(a: unknown, b: unknown, axis: unknown): number {
   return vectorDistance(a, b);
 }
 function component(value: unknown, key: string): number { return isRecord(value) ? Number(value[key]) : Number.NaN; }
+function inputActionBound(value: Record<string, unknown>): boolean {
+  return value.mappingContextApplied === true && value.mappingContainsAction === true && value.mappingContainsKey === true && value.enhancedInputComponent === true;
+}
+function signedDegrees(value: number): number { return Number.isFinite(value) ? ((value + 180) % 360 + 360) % 360 - 180 : value; }
 function nearly(a: number, b: number): boolean { return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= 0.01; }
 function numberInRange(value: unknown, name: string, min: number, max: number): number { const number = Number(value); if (!Number.isFinite(number) || number < min || number > max) throw new Error(`${name} must be between ${min} and ${max}.`); return number; }
 function integerInRange(value: unknown, name: string, min: number, max: number): number { const number = numberInRange(value, name, min, max); if (!Number.isInteger(number)) throw new Error(`${name} must be an integer.`); return number; }

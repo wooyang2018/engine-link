@@ -13,6 +13,7 @@ import { createRunId, RunStore, type RunRecord } from './runStore';
 import { ProjectDoctor } from '../doctor/projectDoctor';
 import type { DoctorRun, DoctorStartOptions } from '../doctor/types';
 import { parseJsonValue } from '../parsers/safeJson';
+import { getRuntimeIdentity } from '../runtimeIdentity';
 
 export interface OperationContext {
   taskId?: string;
@@ -54,6 +55,7 @@ export class EngineLinkService {
     const buildTools = await detectBuildTools();
     return {
       schema: 'enginelink.environment.v1',
+      engineLink: await getRuntimeIdentity(),
       project: ctx.project,
       engine: ctx.engine,
       buildTools: buildTools ?? null,
