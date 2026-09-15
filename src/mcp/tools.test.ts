@@ -6,20 +6,35 @@ describe('EngineLink MCP boundary', () => {
     const names = TOOL_DEFINITIONS.map((tool) => tool.name);
     expect(names).toEqual([
       'enginelink_get_environment',
-      'enginelink_project_doctor_start',
-      'enginelink_get_doctor_run',
-      'enginelink_cancel_doctor_run',
+      'enginelink_project_doctor',
       'enginelink_build',
       'enginelink_clean',
-      'enginelink_get_build_diagnostics',
       'enginelink_generate_compile_commands',
-      'enginelink_get_editor_process',
       'enginelink_launch_editor',
-      'enginelink_run_acceptance',
-      'enginelink_get_run',
     ]);
+    expect(names).not.toContain('enginelink_run_acceptance');
+    expect(names).not.toContain('enginelink_get_run');
     expect(names).not.toContain('enginelink_live_coding');
     expect(names).not.toContain('call_tool');
     expect(names).not.toContain('list_toolsets');
+  });
+
+  it('does not accept targetType on compile-commands', () => {
+    const compile = TOOL_DEFINITIONS.find((tool) => tool.name === 'enginelink_generate_compile_commands');
+    expect(compile?.inputSchema.properties).toMatchObject({
+      configuration: expect.anything(),
+      platform: expect.anything(),
+    });
+    expect(compile?.inputSchema.properties).not.toHaveProperty('targetType');
+  });
+
+  it('project_doctor only accepts paths', () => {
+    const doctor = TOOL_DEFINITIONS.find((tool) => tool.name === 'enginelink_project_doctor');
+    expect(Object.keys(doctor?.inputSchema.properties ?? {})).toEqual(['paths']);
+    expect(doctor?.inputSchema.properties).not.toHaveProperty('timeoutMs');
+    expect(doctor?.inputSchema.properties).not.toHaveProperty('taskId');
+    expect(doctor?.inputSchema.properties).not.toHaveProperty('reason');
+    expect(doctor?.inputSchema.properties).not.toHaveProperty('referenceQueries');
+    expect(doctor?.inputSchema.properties).not.toHaveProperty('baselineRunId');
   });
 });

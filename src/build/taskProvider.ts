@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { buildCommandLine, cleanCommandLine, generateClangDatabaseCommandLine } from './ubt';
+import { buildCommandLine, cleanCommandLine } from './ubt';
 import { EXTENSION_ID } from '../constants';
 import type { EngineLinkContext, EngineLinkTaskDefinition, BuildConfiguration, BuildTargetType, BuildPlatform } from '../types';
 import { EngineLinkSettings } from '../config/settings';
@@ -22,11 +22,16 @@ export class EngineLinkTaskProvider implements vscode.TaskProvider<vscode.Task> 
     const target = this.settings.buildTarget;
     const platform = this.settings.platform;
 
-    return [
-      this.createTask('build', `Build (${config} ${target})`, config, target, platform),
-      this.createTask('clean', 'Clean', config, target, platform),
-      this.createTask('generateCompileCommands', 'Generate compile_commands.json', config, target, platform),
-    ];
+    try {
+      return [
+        this.createTask('build', `Build (${config} ${target})`, config, target, platform),
+        this.createTask('clean', 'Clean', config, target, platform),
+        this.createTask('generateCompileCommands', 'Generate compile_commands.json', config, target, platform),
+      ];
+    } catch (error) {
+      this.ctx.outputChannel.appendLine(`[EngineLink] ${error instanceof Error ? error.message : String(error)}`);
+      return [];
+    }
   }
 
   resolveTask(task: vscode.Task): vscode.ProviderResult<vscode.Task> {
@@ -37,7 +42,12 @@ export class EngineLinkTaskProvider implements vscode.TaskProvider<vscode.Task> 
     const target = definition.targetType ?? this.settings.buildTarget;
     const platform = definition.platform ?? this.settings.platform;
 
-    return this.createTask(definition.action, task.name, config, target, platform);
+    try {
+      return this.createTask(definition.action, task.name, config, target, platform);
+    } catch (error) {
+      this.ctx.outputChannel.appendLine(`[EngineLink] ${error instanceof Error ? error.message : String(error)}`);
+      return undefined;
+    }
   }
 
   private createTask(
@@ -55,33 +65,9 @@ export class EngineLinkTaskProvider implements vscode.TaskProvider<vscode.Task> 
       platform,
     };
 
-    let cmd;
-    switch (action) {
-      case 'clean':
-        cmd = cleanCommandLine(this.ctx.engine!, this.ctx.project!, {
-          configuration: config,
-          targetType: target,
-          platform,
-        });
-        break;
-      case 'generateCompileCommands':
-        cmd = generateClangDatabaseCommandLine(this.ctx.engine!, this.ctx.project!, {
-          configuration: config,
-          platform,
-        });
-        break;
-      default:
-        cmd = buildCommandLine(this.ctx.engine!, this.ctx.project!, {
-          configuration: config,
-          targetType: target,
-          platform,
-        });
-    }
-
-    const execution = new vscode.ShellExecution(
-      `"${cmd.executable}"`,
-      cmd.args,
-    );
+    const execution = action === 'generateCompileCommands'
+      ? this.compileCommandsExecution(config, platform)
+      : this.ubtExecution(action, config, target, platform);
 
     const task = new vscode.Task(
       definition,
@@ -100,5 +86,40 @@ export class EngineLinkTaskProvider implements vscode.TaskProvider<vscode.Task> 
     };
 
     return task;
+  }
+
+  private compileCommandsExecution(config: BuildConfiguration, platform: BuildPlatform): vscode.ShellExecution {
+    if (!this.ctx.cliPath || !this.ctx.project) {
+      throw new Error('EngineLink CLI path is not available.');
+    }
+    return new vscode.ShellExecution('node', [
+      this.ctx.cliPath,
+      'compile-commands',
+      '--project', this.ctx.project.projectRoot,
+      '--configuration', config,
+      '--platform', platform,
+    ]);
+  }
+
+  private ubtExecution(
+    action: string,
+    config: BuildConfiguration,
+    target: BuildTargetType,
+    platform: BuildPlatform,
+  ): vscode.ShellExecution {
+    const cmd = action === 'clean'
+      ? cleanCommandLine(this.ctx.engine!, this.ctx.project!, {
+          configuration: config,
+          targetType: target,
+          platform,
+          editorTargetName: this.ctx.editorTargetName,
+        })
+      : buildCommandLine(this.ctx.engine!, this.ctx.project!, {
+          configuration: config,
+          targetType: target,
+          platform,
+          editorTargetName: this.ctx.editorTargetName,
+        });
+    return new vscode.ShellExecution(`"${cmd.executable}"`, cmd.args);
   }
 }

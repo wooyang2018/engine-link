@@ -1,4 +1,3 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import { spawn } from 'child_process';
 import { buildCommandLine, cleanCommandLine, generateClangDatabaseCommandLine } from '../build/ubt';
@@ -11,9 +10,12 @@ import { exists } from './config';
 import { resolveStandaloneContext, type StandaloneContext } from './discovery';
 import { createRunId, RunStore, type RunRecord } from './runStore';
 import { ProjectDoctor } from '../doctor/projectDoctor';
-import type { DoctorRun, DoctorStartOptions } from '../doctor/types';
+import { toDoctorView } from '../doctor/view';
+import type { DoctorStartOptions, DoctorView } from '../doctor/types';
 import { parseJsonValue } from '../parsers/safeJson';
 import { getRuntimeIdentity } from '../runtimeIdentity';
+import { pickTargetForType } from '../parsers/targetParser';
+import { placeCompileCommands } from '../cursor/placeCompileCommands';
 
 export interface OperationContext {
   taskId?: string;
@@ -24,11 +26,6 @@ export interface BuildOptions extends OperationContext {
   configuration?: BuildConfiguration;
   targetType?: BuildTargetType;
   platform?: BuildPlatform;
-}
-
-export interface AcceptanceOptions extends OperationContext {
-  tier: string;
-  evidenceNotes?: string;
 }
 
 export interface EditorProcessInfo {
@@ -58,30 +55,19 @@ export class EngineLinkService {
       engineLink: await getRuntimeIdentity(),
       project: ctx.project,
       engine: ctx.engine,
+      editor: await this.getEditorProcess(),
       buildTools: buildTools ?? null,
       defaults: this.buildDefaults(ctx),
       configPath: path.join(ctx.projectRoot, '.enginelink', 'project.json'),
       responsibilities: {
-        engineLink: 'Host-side discovery, cold builds, editor process launch, diagnostics, compile database, and acceptance.',
-        unrealMcp: 'Editor-side assets, PIE, Live Coding, transactions, and VibeUE toolsets.',
+        engineLink: 'Host-side discovery, cold builds, editor process launch, compile database, and Project Doctor.',
+        unrealMcp: 'Editor-side assets, PIE, Live Coding, transactions, and native Unreal MCP toolsets.',
       },
     };
   }
 
-  async startProjectDoctor(options: DoctorStartOptions = {}): Promise<DoctorRun> {
-    return this.projectDoctor.start(options);
-  }
-
-  async getProjectDoctorRun(runId: string): Promise<DoctorRun> {
-    return this.projectDoctor.get(runId);
-  }
-
-  async cancelProjectDoctorRun(runId: string): Promise<DoctorRun> {
-    return this.projectDoctor.cancel(runId);
-  }
-
-  async waitForProjectDoctorRun(runId: string, timeoutMs?: number): Promise<DoctorRun> {
-    return this.projectDoctor.waitForTerminal(runId, timeoutMs);
+  async runProjectDoctor(options: DoctorStartOptions = {}): Promise<DoctorView> {
+    return toDoctorView(await this.projectDoctor.run(options));
   }
 
   async build(options: BuildOptions = {}): Promise<RunRecord> {
@@ -91,13 +77,14 @@ export class EngineLinkService {
       configuration: options.configuration ?? defaults.configuration,
       targetType: options.targetType ?? defaults.targetType,
       platform: options.platform ?? defaults.platform,
+      editorTargetName: defaults.editorTargetName,
     });
     const projectProcess = await this.findProjectEditor(ctx.project.uprojectPath);
     if (projectProcess) {
       const message = `Unreal Editor is running for this project (PID ${projectProcess.pid}). Use Unreal MCP LiveCodingToolset for compatible changes, or close the editor before a cold build.`;
       return this.saveBlockedRun('build', ctx, command.executable, command.args, options, message, { editorPid: projectProcess.pid });
     }
-    return this.runCommand('build', ctx, command.executable, command.args, options);
+    return (await this.runCommand('build', ctx, command.executable, command.args, options)).record;
   }
 
   async clean(options: BuildOptions & { confirm?: boolean } = {}): Promise<RunRecord> {
@@ -107,6 +94,7 @@ export class EngineLinkService {
       configuration: options.configuration ?? defaults.configuration,
       targetType: options.targetType ?? defaults.targetType,
       platform: options.platform ?? defaults.platform,
+      editorTargetName: defaults.editorTargetName,
     });
     if (!options.confirm) {
       return this.saveBlockedRun(
@@ -114,15 +102,7 @@ export class EngineLinkService {
         'Clean removes build products. Re-run with confirm=true.',
       );
     }
-    return this.runCommand('clean', ctx, command.executable, command.args, options);
-  }
-
-  async getBuildDiagnostics(): Promise<Record<string, unknown>> {
-    const ctx = await this.contextPromise;
-    const latest = await new RunStore(ctx.projectRoot).getLatest('build');
-    return latest
-      ? { runId: latest.id, success: latest.success, diagnostics: latest.diagnostics ?? [] }
-      : { runId: null, success: null, diagnostics: [] };
+    return (await this.runCommand('clean', ctx, command.executable, command.args, options)).record;
   }
 
   async generateCompileCommands(options: BuildOptions = {}): Promise<RunRecord> {
@@ -131,18 +111,37 @@ export class EngineLinkService {
     const command = generateClangDatabaseCommandLine(ctx.engine, ctx.project, {
       configuration: options.configuration ?? defaults.configuration,
       platform: options.platform ?? defaults.platform,
+      editorTargetName: defaults.editorTargetName,
     });
-    const record = await this.runCommand('compile-commands', ctx, command.executable, command.args, options);
+    const { record, rawOutput } = await this.runCommand('compile-commands', ctx, command.executable, command.args, options);
     if (!record.success) return record;
-    const dbPath = path.join(ctx.projectRoot, 'compile_commands.json');
-    if (!(await exists(dbPath))) throw new Error(`UBT succeeded but did not create ${dbPath}`);
+    const placed = await placeCompileCommands({
+      projectRoot: ctx.projectRoot,
+      engineRoot: ctx.engine.root,
+      ubtOutput: rawOutput,
+    });
+    if (!placed.ok) {
+      record.success = false;
+      record.exitCode = record.exitCode || 1;
+      record.details = {
+        ...(record.details ?? {}),
+        message: `UBT succeeded but EngineLink could not place compile_commands.json at ${placed.compileCommandsPath}.`,
+      };
+      await new RunStore(ctx.projectRoot).save(record);
+      return record;
+    }
     const postProcess = await postProcessCompileCommandsFile(ctx.projectRoot, ctx.engine.root);
-    record.details = { ...(record.details ?? {}), postProcess: postProcess.stats, compileCommandsPath: dbPath };
+    record.details = {
+      ...(record.details ?? {}),
+      postProcess: postProcess.stats,
+      compileCommandsPath: placed.compileCommandsPath,
+      placedFrom: placed.placedFrom,
+    };
     await new RunStore(ctx.projectRoot).save(record);
     return record;
   }
 
-  async getEditorProcess(): Promise<{ running: boolean; process: EditorProcessInfo | null; processes: EditorProcessInfo[] }> {
+  private async getEditorProcess(): Promise<{ running: boolean; process: EditorProcessInfo | null; processes: EditorProcessInfo[] }> {
     const ctx = await this.contextPromise;
     const processes = await this.findProjectEditors(ctx.project.uprojectPath);
     return { running: processes.length > 0, process: processes[0] ?? null, processes };
@@ -176,41 +175,14 @@ export class EngineLinkService {
     return { launched: true, existing: false, pid: child.pid, runId: id };
   }
 
-  async runAcceptance(options: AcceptanceOptions): Promise<RunRecord> {
-    const ctx = await this.contextPromise;
-    const acceptance = ctx.config.acceptance;
-    if (!acceptance) throw new Error('No acceptance command is configured in .enginelink/project.json');
-    const args = [...(acceptance.args ?? [])];
-    if (acceptance.tierArgument) args.push(acceptance.tierArgument, options.tier);
-    if (options.evidenceNotes) args.push('-EvidenceNotes', options.evidenceNotes);
-    const record = await this.runCommand('acceptance', ctx, acceptance.command, args, options);
-    record.evidencePath = await this.findLatestEvidence(ctx, acceptance.evidenceRoot);
-    await new RunStore(ctx.projectRoot).save(record);
-    return record;
-  }
-
-  async getRun(id: string): Promise<RunRecord> {
-    const ctx = await this.contextPromise;
-    return new RunStore(ctx.projectRoot).get(id);
-  }
-
-  async explainRun(id: string): Promise<string> {
-    const run = await this.getRun(id);
-    const manual = run.kind === 'build'
-      ? 'Close Unreal Editor, then run the recorded UBT command in PowerShell.'
-      : run.kind === 'compile-commands'
-        ? 'Run UnrealBuildTool in GenerateClangDatabase mode, then point clangd at the project-root compile_commands.json.'
-        : run.kind === 'launch'
-          ? 'Open the .uproject from Explorer or run UnrealEditor.exe with the project path.'
-          : 'Run the recorded project acceptance command from the project root.';
-    return `# EngineLink run ${run.id}\n\n- Operation: ${run.kind}\n- Reason: ${run.reason || 'Not supplied'}\n- Result: ${run.success ? 'succeeded' : 'failed'}\n- Duration: ${run.durationMs} ms\n\n## Manual equivalent\n\n${manual}\n`;
-  }
-
-  private buildDefaults(ctx: StandaloneContext): Required<NonNullable<StandaloneContext['config']['build']>> {
+  private buildDefaults(ctx: StandaloneContext) {
+    const editorTargetName = ctx.config.build?.editorTargetName?.trim() || undefined;
     return {
-      configuration: ctx.config.build?.configuration ?? 'Development',
-      targetType: ctx.config.build?.targetType ?? 'Editor',
-      platform: ctx.config.build?.platform ?? 'Win64',
+      configuration: ctx.config.build?.configuration ?? 'Development' as const,
+      targetType: ctx.config.build?.targetType ?? 'Editor' as const,
+      platform: ctx.config.build?.platform ?? 'Win64' as const,
+      editorTargetName,
+      editorTarget: pickTargetForType(ctx.project, 'Editor', { editorTargetName }),
     };
   }
 
@@ -220,7 +192,7 @@ export class EngineLinkService {
     executable: string,
     args: string[],
     operation: OperationContext,
-  ): Promise<RunRecord> {
+  ): Promise<{ record: RunRecord; rawOutput: string }> {
     const id = createRunId(kind);
     const started = Date.now();
     const diagnostics: ParsedDiagnostic[] = [];
@@ -230,6 +202,7 @@ export class EngineLinkService {
       onStderr: (line) => { const diagnostic = parseBuildLine(line); if (diagnostic) diagnostics.push(diagnostic); },
     });
     const finished = Date.now();
+    const rawOutput = `${result.stdout}${result.stderr}`;
     const record: RunRecord = {
       schema: 'enginelink.run.v1', id, kind, taskId: operation.taskId, reason: operation.reason,
       startedAt: new Date(started).toISOString(), finishedAt: new Date(finished).toISOString(),
@@ -237,8 +210,8 @@ export class EngineLinkService {
       project: ctx.project.uprojectPath, engine: ctx.engine.root,
       command: { executable, args: redactArgs(args) }, diagnostics,
     };
-    await new RunStore(ctx.projectRoot).save(record, `${result.stdout}${result.stderr}`);
-    return record;
+    await new RunStore(ctx.projectRoot).save(record, rawOutput);
+    return { record, rawOutput };
   }
 
   private async saveBlockedRun(
@@ -282,20 +255,6 @@ export class EngineLinkService {
         pid: Number(match.ProcessId), project: uprojectPath, commandLine: String(match.CommandLine ?? ''),
         startedAt: normalizeCimDate(match.CreationDate),
       }));
-  }
-
-  private async findLatestEvidence(ctx: StandaloneContext, configuredRoot?: string): Promise<string | undefined> {
-    const root = path.resolve(ctx.projectRoot, configuredRoot ?? path.join('docs', 'evidence', 'acceptance'));
-    const entries = await fs.promises.readdir(root, { withFileTypes: true }).catch(() => []);
-    const candidates: Array<{ file: string; time: number }> = [];
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const file = path.join(root, entry.name, 'summary.json');
-      const stat = await fs.promises.stat(file).catch(() => undefined);
-      if (stat) candidates.push({ file, time: stat.mtimeMs });
-    }
-    candidates.sort((a, b) => b.time - a.time);
-    return candidates[0]?.file;
   }
 }
 

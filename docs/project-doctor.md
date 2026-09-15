@@ -1,129 +1,69 @@
 # UE Project Doctor
 
-Project Doctor is a read-only, evidence-oriented diagnostic runner for a local Unreal Editor. It focuses on the current Git change and affected assets instead of treating a full-project inventory as a product of its own.
+Project Doctor 是 EngineLink 的只读项目诊断。一次运行固定做宿主工具链检查，再视 Editor / 原生 Unreal MCP 是否可用做结构扫描。它**不是**玩法测试运行器。
 
-## Modes
+## Agent 怎么读结果
 
-- `preflight` checks the host toolchain and engine layout (Visual Studio/SDK, clang-cl, UBT/Editor binaries), then the Editor process, VibeUE readiness and heartbeat, Unreal MCP capability, current map, PIE, dirty packages, open asset editors, latest real build record, and the run-scoped log.
-- `changed` adds Asset Registry dependency/referencer checks, Blueprint compile and graph checks, and project rules. With no `--path`, Git status defines the initial scope.
-- `scenario` segments VibeUE-native steps and lets EngineLink perform sustained input, runtime sampling, high-level assertions, captured evidence, and authoritative teardown between those segments.
+MCP/CLI 返回 `enginelink.doctor-view.v1`：`status`、`conclusion`、`coverage`、`issues`、`reportPath`。
 
-Runs are asynchronous over MCP. Start with `enginelink_project_doctor_start`, poll `enginelink_get_doctor_run`, and use `enginelink_cancel_doctor_run` to request cancellation.
+1. 看 `status`：`passed` / `passed_with_findings` / `failed` / `incomplete`。
+2. `incomplete`：先读 `coverage`（哪一项没跑到），不要把空 `issues` 当成项目通过。
+3. `failed`：再读 P0/P1 `issues`。
+4. `passed_with_findings`：只有已执行检查留下的 P2。
 
-Reports and raw evidence are written beneath `Saved/EngineLink/Doctor/Runs/<run-id>/`. `enginelink.doctor-run.v1` is the only schema. Its terminal status is:
+Doctor 终态 `failed` **不会**把 MCP `isError` 设为 true。`isError` 只用于抛错或宿主 `enginelink.run.v1` 且 `success === false`。
 
-- `passed`: every requested check completed and there are no findings;
-- `passed_with_findings`: every requested check completed and only P2 findings remain;
-- `failed`: an executed check failed or a P0/P1 issue exists;
-- `incomplete`: a prerequisite, check, or trustworthy evidence source is unavailable or conflicting;
-- `cancelled`: the caller cancelled the run.
+## 一次运行做什么
 
-`summary` always records `total`, the P0/P1/P2 and confirmed/inferred/unconfirmed counts, `checksComplete`, `hasFindings`, and `hasBlockingIssues`. The CLI exits 0 for `passed` and `passed_with_findings`, and 1 for every other terminal status. There is deliberately no legacy status/schema translation because Doctor has not been released.
+顺序固定：
 
-Build evidence contains one `authoritative` candidate and a separate `history` list. Only a real succeeded/failed build for the same project, current session/build-and-launch window, and source state can be authoritative. Blocked, running, skipped, stale, old-PID, old-session, and superseded records stay in history and do not affect status. Markdown reports show history in a collapsed details section. Multiple Editors for the same project make the run incomplete before MCP or PIE work begins. Every environment and Doctor report also records the EngineLink version, server PID, process start time, bundle path, and bundle modification time so stale MCP processes are visible.
+1. **host** — Visual Studio / Windows SDK、UBT、Editor 二进制。缺口写成 `host.*` issue。
+2. **editor** — 本机 Unreal Editor 进程 + 原生 MCP `call_tool`（`IsPIERunning` 等）。连不上、多开、工具集不足 → `coverage.editor=unavailable`，**不**写 `editor.offline` 一类 issue。
+3. **build** — 只信 EngineLink `RunStore` 的权威冷构建。忽略 `Saved/VibeUE/last-build.json`。
+4. **assets / blueprints** — 默认 Git 变更路径，或 `--path` / `paths`。原生引用工具只收到这些路径转成的 `/Game/...`。缺引用、Blueprint 编译失败、原生工具给出的图结构问题写成 issue。用户已在 PIE 中时**不**做深度扫描，也**不** `StartPIE` / `StopPIE`。
 
-## Project configuration
-
-Optional settings live in `.enginelink/project.json`. Paths must be relative to the project root, and the Unreal MCP URL must use a loopback host.
-
-```json
-{
-  "schemaVersion": 1,
-  "uproject": "MyGame.uproject",
-  "unrealMcp": {
-    "url": "http://127.0.0.1:8000/mcp",
-    "connectTimeoutMs": 5000,
-    "requestTimeoutMs": 60000
-  },
-  "doctor": {
-    "rulesDirectory": ".enginelink/doctor/rules",
-    "scenariosDirectory": ".enginelink/doctor/scenarios"
-  }
-}
-```
-
-## Rules
-
-A rule file is either a JSON array or an object containing a `rules` array. Each rule has a stable `id`, a `domain`, a `P0`/`P1`/`P2` severity, a description, and kind-specific parameters.
-
-```json
-{
-  "rules": [
-    {
-      "id": "input.old-context-cleared",
-      "kind": "reference_absent",
-      "domain": "input",
-      "severity": "P1",
-      "description": "The retired input context must have no remaining references.",
-      "params": { "from": "/Game/Characters/BP_Player", "to": "/Game/Input/IMC_Old" }
-    },
-    {
-      "id": "gas.end-ability-reachable",
-      "kind": "blueprint_path_reaches",
-      "domain": "gas",
-      "severity": "P1",
-      "description": "Ability activation must reach EndAbility.",
-      "params": {
-        "asset": "/Game/Abilities/GA_Example",
-        "graph": "EventGraph",
-        "from": "ActivateAbility",
-        "to": "EndAbility"
-      }
-    }
-  ]
-}
-```
-
-Supported kinds are `asset_exists`, `asset_absent`, `reference_exists`, `reference_absent`, `config_contains`, `config_absent`, `property_equals`, `blueprint_node_present`, `blueprint_node_absent`, and `blueprint_path_reaches`. Config paths are confined to the project root. Arbitrary Python rules are intentionally unsupported.
-
-## Scenarios
-
-Scenario files combine VibeUE WorkflowService actions with EngineLink Doctor actions. Project Doctor refuses to take over an existing PIE session or switch away from a dirty map. It snapshots the map, PIE client setting, and background-throttling state, releases active input, stops only the PIE session it started, and restores settings after success, failure, cancellation, or timeout.
-
-```json
-{
-  "schema": "enginelink.doctor-scenario.v1",
-  "name": "single-client-smoke",
-  "map": "/Game/Maps/TestMap",
-  "clients": 1,
-  "timeoutSeconds": 90,
-  "preflight": { "compile_blueprints": ["/Game/Characters/BP_Player"] },
-  "steps": [
-    { "action": "start_pie" },
-    { "action": "wait_for_pie", "timeout_seconds": 30 },
-    { "action": "wait_for_local_players", "count": 1, "timeoutMs": 20000 },
-    { "action": "input_action_bound", "clientIndex": 0, "context": "/Game/Input/IMC_Default.IMC_Default", "path": "/Game/Input/IA_Move.IA_Move", "key": "W" },
-    { "action": "snapshot_player", "clientIndex": 0, "name": "before" },
-    { "action": "inject_action", "clientIndex": 0, "path": "/Game/Input/IA_Move.IA_Move", "value": { "type": "Axis2D", "x": 0, "y": 1 }, "repeat": 20, "intervalMs": 16 },
-    { "action": "wait", "seconds": 0.25 },
-    { "action": "snapshot_player", "clientIndex": 0, "name": "after" },
-    { "action": "actor_location_changed", "clientIndex": 0, "from": "before", "to": "after", "minDistance": 10 },
-    { "action": "capture_game", "name": "after-jump" }
-  ],
-  "teardown": { "stop_pie": true }
-}
-```
-
-`clientIndex` is the zero-based interactive PIE client-window ordinal and defaults to `0`. EngineLink excludes windowless dedicated-server worlds, sorts the remaining PIE worlds by raw PIE instance ID, and records both identities. It applies to `inject_action`, `snapshot_player`, input binding checks, player assertions, and GameplayTag assertions. `wait_for_local_players.count` counts only those interactive client windows. `input_action_bound.timeoutMs` optionally waits for a newly created client's mapping context and Enhanced Input component to finish initializing.
-
-`inject_action` retains the one-shot `path + x/y/z` form. `value` accepts Boolean, Axis1D, Axis2D, or Axis3D values. `repeat` and `durationMs` are mutually exclusive; `intervalMs`, `duration_ms`, and `interval_ms` are accepted. Duration is capped at 300 seconds and injection count at 10,000. Each actual call records its timestamp, value, client identity, and outcome. Repeated/duration input releases to zero by default; one-shot input retains its prior non-release behavior. Cancellation, timeout, or PIE failure triggers an emergency release on the original target client.
-
-EngineLink actions are `wait_for_local_players`, `snapshot_player`, `actor_location_changed`, `actor_rotation_changed`, `control_rotation_changed`, `control_rotation_unchanged`, `control_rotation_in_range`, `player_camera_pitch_limits`, `input_action_bound`, `gameplay_tag_present`, and `gameplay_tag_absent`. These host actions are never forwarded into a VibeUE-native scenario segment. Failure evidence includes the map, LocalPlayer/Pawn data, input parameters and actual count, per-attempt target evidence, before/after snapshots, failed assertion, captures, and the independently recorded input-release, PIE-stop, and environment-restore teardown results. See `examples/doctor/scenarios/input-camera-smoke.json` for a copyable scenario.
-
-## JSON and MCP evidence
-
-All external JSON inputs use one parser that handles UTF-8/UTF-16 BOMs, CRLF/LF, whitespace, empty input, and balanced JSON embedded in logs. Parse errors report source, detected encoding, position, length, SHA-256, and a redacted summary. Doctor preserves raw MCP responses as run artifacts.
-
-MCP result priority is `structuredContent`, complete JSON text/envelope, persisted VibeUE artifact, then `ENGINELINK_DOCTOR_RESULT`. A valid high-priority result is retained when a lower-priority marker is malformed (with a warning); valid sources that disagree make the phase and final run `incomplete`.
-
-## CLI
+CLI：
 
 ```powershell
-node dist/cli.js project-doctor --project D:/Workspace/MyGame --mode changed
-node dist/cli.js project-doctor --project D:/Workspace/MyGame --mode changed --path /Game/Characters/BP_Player --reference /Game/Input/IMC_Old
-node dist/cli.js project-doctor --project D:/Workspace/MyGame --mode scenario --scenario single-client-smoke
-node dist/cli.js doctor-run --project D:/Workspace/MyGame --id 20260912T120000Z-doctor-abcd1234
-node dist/cli.js doctor-cancel --project D:/Workspace/MyGame --id 20260912T120000Z-doctor-abcd1234
+node dist/cli.js project-doctor --project D:/Workspace/MyGame
+node dist/cli.js project-doctor --project D:/Workspace/MyGame --path Content/BP/BP_Test.uasset
 ```
 
-Pass `--baseline <run-id>` to repeat a verification run. If scope arguments are omitted, EngineLink reuses the baseline scope. Explicitly changing that scope is rejected. Rules are loaded from the baseline run snapshot, so removed or edited rule files cannot turn an unexecuted check into a resolved issue.
+MCP：一次调用 `enginelink_project_doctor`（可选 `paths`），等到终态再返回 view。连 Editor 做资产扫描时可能到分钟级。内部默认 180s 超时 → `incomplete`；人类用 CLI `--timeout-ms` 覆盖。六个工具的输入输出见 [mcp-tools.md](./mcp-tools.md)。
+
+## coverage vs issue
+
+| 情况 | 表达 |
+|------|------|
+| Editor 未开、MCP 不可用、多 Editor、PIE 占用、无权威构建 | 只写 `coverage.*`（`unavailable` / `incomplete`） |
+| 宿主工具链缺失、权威构建失败、脏包、已扫描到的坏引用/编译/图问题 | 写 `issues` |
+
+启发式图问题（如未连接的 Cast Failed）仍是 **P2 issue**，没有 `confidence` 字段。
+
+## 玩法测试不在这里
+
+EngineLink **不**提供、也**不**代跑验收命令或 CQTest。业务项目自己编写并执行：
+
+- [Automation Test Framework / CQTest](https://dev.epicgames.com/documentation/unreal-engine/automation-test-framework-in-unreal-engine)
+- [Automation Driver](https://dev.epicgames.com/documentation/unreal-engine/automation-driver-in-unreal-engine)
+
+可用 Session Frontend、`UnrealEditor-Cmd -ExecCmds=Automation RunTest`，或项目自己的脚本。Agent 改测试 = 改项目 C++，不要找 EngineLink 验收工具。
+
+## Unreal MCP
+
+Doctor 在 EngineLink 进程内用 loopback HTTP Streamable 调用编辑器的 **`call_tool` / `list_toolsets` / `describe_toolset`**。需要项目启用 Unreal MCP 与 AllToolsets。EngineLink MCP **不**把这些元工具暴露给调用方。
+
+Doctor 不依赖 VibeUE：不注入 `execute_python_code`、不读 `Saved/VibeUE/Signals`、不 `import vibeue`。
+
+证据优先 MCP `structuredContent`，其次文本 JSON。不再使用 `ENGINELINK_DOCTOR_RESULT=` 打印标记。
+
+## 报告位置
+
+```
+Saved/EngineLink/Doctor/Runs/<run-id>/
+  summary.json    # 与 view 同字段，外加 requestedPaths、startedAt/finishedAt、error?
+  report.md
+  scan.json       # 仅当资产扫描实际跑过
+Saved/EngineLink/Doctor/Runs/latest.json
+Saved/EngineLink/doctor.lock
+```

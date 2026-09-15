@@ -1,28 +1,128 @@
-import { Buffer } from 'buffer';
-import type { DoctorRule, UnrealScanResult } from './types';
-import type { UnrealMcpGateway } from './unrealMcpClient';
-import { DoctorEvidenceConflictError, resolveDoctorEvidence, type DoctorEvidence } from './evidence';
-
-const RESULT_MARKER = 'ENGINELINK_DOCTOR_RESULT=';
+import type { DoctorSeverity, UnrealScanResult } from './types';
+import { callNativeTool, type UnrealMcpGateway } from './unrealMcpClient';
+import { DoctorEvidenceConflictError, resolveDoctorEvidence, unwrapNativeValue, type DoctorEvidence } from './evidence';
 
 export interface UnrealEvidenceResult<T> { data: T; evidence: DoctorEvidence<T>; raw: unknown }
 
-export async function queryEditorState(gateway: UnrealMcpGateway): Promise<UnrealEvidenceResult<Record<string, unknown>>> {
-  const result = await gateway.call('execute_python_code', { code: editorStateScript() });
-  if (result.isError) throw new Error(result.text || 'Unreal editor state query failed.');
-  return evidenceResult<Record<string, unknown>>(result, 'Unreal editor state');
+export interface NativeToolRef { toolset: string; tool: string }
+
+export interface NativeToolCatalog {
+  pie?: NativeToolRef;
+  openAssets?: NativeToolRef;
+  dirtyPackages?: NativeToolRef;
+  currentMap?: NativeToolRef;
+  assetEdges?: NativeToolRef;
+  blueprintInfo?: NativeToolRef;
+}
+
+export async function queryEditorState(gateway: UnrealMcpGateway, catalog: NativeToolCatalog): Promise<UnrealEvidenceResult<Record<string, unknown>>> {
+  if (!catalog.pie) throw new Error('Unreal MCP has no IsPIERunning tool; enable AllToolsets.');
+  const pieOutput = await callNativeTool(gateway, catalog.pie.toolset, catalog.pie.tool);
+  if (pieOutput.isError) throw new Error(pieOutput.text || 'IsPIERunning failed.');
+  const pieEvidence = evidenceResult<unknown>(pieOutput, 'IsPIERunning');
+  const state: Record<string, unknown> = { pieRunning: asBoolean(unwrapNativeValue(pieEvidence.data)), dirtyPackages: [], openAssets: [] };
+
+  if (catalog.openAssets) {
+    const openOutput = await callNativeTool(gateway, catalog.openAssets.toolset, catalog.openAssets.tool);
+    if (openOutput.isError) state.openAssetsError = openOutput.text || 'GetOpenAssets failed.';
+    else {
+      const openEvidence = evidenceResult<unknown>(openOutput, 'GetOpenAssets');
+      state.openAssets = asStringArray(unwrapNativeValue(openEvidence.data));
+    }
+  }
+  if (catalog.dirtyPackages) {
+    const dirtyOutput = await callNativeTool(gateway, catalog.dirtyPackages.toolset, catalog.dirtyPackages.tool);
+    if (dirtyOutput.isError) state.dirtyPackagesError = dirtyOutput.text || 'GetDirtyPackages failed.';
+    else {
+      const dirtyEvidence = evidenceResult<unknown>(dirtyOutput, 'GetDirtyPackages');
+      state.dirtyPackages = asStringArray(unwrapNativeValue(dirtyEvidence.data));
+    }
+  }
+  if (catalog.currentMap) {
+    const mapOutput = await callNativeTool(gateway, catalog.currentMap.toolset, catalog.currentMap.tool);
+    if (mapOutput.isError) state.currentMapError = mapOutput.text || 'GetCurrentMap failed.';
+    else {
+      const mapEvidence = evidenceResult<unknown>(mapOutput, 'GetCurrentMap');
+      const value = unwrapNativeValue(mapEvidence.data);
+      const record = asRecord(value);
+      state.currentMap = typeof value === 'string' ? value : String(record?.currentMap ?? record?.map ?? record?.path ?? value ?? '');
+    }
+  }
+
+  return {
+    data: state,
+    evidence: { ...pieEvidence.evidence, value: state },
+    raw: { pie: pieOutput, state },
+  };
 }
 
 export async function scanUnrealProject(
   gateway: UnrealMcpGateway,
+  catalog: NativeToolCatalog,
   paths: string[],
-  referenceQueries: string[],
-  rules: DoctorRule[],
 ): Promise<UnrealEvidenceResult<UnrealScanResult>> {
-  const input = Buffer.from(JSON.stringify({ paths, referenceQueries, rules }), 'utf8').toString('base64');
-  const result = await gateway.call('execute_python_code', { code: scanScript(input) }, { timeoutMs: 120_000 });
-  if (result.isError) throw new Error(result.text || 'Unreal project scan failed.');
-  return evidenceResult<UnrealScanResult>(result, 'Unreal project scan');
+  const targets = unique(paths.map(toGamePath).filter(Boolean));
+  const result: UnrealScanResult = { editor: {}, inventory: [], references: [], blueprints: [], missingTools: [] };
+  if (!catalog.assetEdges) {
+    result.missingTools.push('asset referencer/dependency tool');
+    return { data: result, evidence: emptyEvidence(result), raw: result };
+  }
+
+  const output = await callNativeTool(gateway, catalog.assetEdges.toolset, catalog.assetEdges.tool, {
+    paths: targets,
+  }, { timeoutMs: 120_000 });
+  if (output.isError) throw new Error(output.text || 'Asset dependency scan failed.');
+  const evidence = evidenceResult<unknown>(output, 'asset edges');
+  const payload = asRecord(unwrapNativeValue(evidence.data)) ?? asRecord(evidence.data) ?? {};
+  result.inventory = asInventory(payload.inventory);
+  result.references = asReferences(payload.references);
+  result.blueprints = asBlueprints(payload.blueprints);
+
+  if (catalog.blueprintInfo && result.blueprints.length === 0) {
+    const infoOutput = await callNativeTool(gateway, catalog.blueprintInfo.toolset, catalog.blueprintInfo.tool, { paths: targets }, { timeoutMs: 120_000 });
+    if (!infoOutput.isError) {
+      const info = evidenceResult<unknown>(infoOutput, 'blueprint info');
+      const infoPayload = asRecord(unwrapNativeValue(info.data)) ?? {};
+      result.blueprints = asBlueprints(infoPayload.blueprints ?? infoPayload);
+    }
+  }
+
+  return { data: result, evidence: { ...evidence.evidence, value: result }, raw: output };
+}
+
+export async function loadNativeToolCatalog(gateway: UnrealMcpGateway): Promise<NativeToolCatalog> {
+  const tools = await gateway.listTools();
+  if (!tools.includes('call_tool')) throw new Error('Unreal MCP does not expose call_tool. Enable the Unreal MCP plugin and AllToolsets.');
+  const catalog: NativeToolCatalog = {};
+  if (!tools.includes('list_toolsets') || !tools.includes('describe_toolset')) {
+    catalog.pie = { toolset: 'EditorToolset.EditorAppToolset', tool: 'IsPIERunning' };
+    catalog.openAssets = { toolset: 'EditorToolset.EditorAppToolset', tool: 'GetOpenAssets' };
+    catalog.dirtyPackages = { toolset: 'EditorToolset.EditorAppToolset', tool: 'GetDirtyPackages' };
+    catalog.currentMap = { toolset: 'EditorToolset.EditorAppToolset', tool: 'GetCurrentMap' };
+    catalog.assetEdges = { toolset: 'AssetTools', tool: 'GetReferencersAndDependencies' };
+    catalog.blueprintInfo = { toolset: 'BlueprintTools', tool: 'GetGraphIssues' };
+    return catalog;
+  }
+
+  const listed = evidenceResult<unknown>(await gateway.call('list_toolsets', {}), 'list_toolsets');
+  for (const toolset of extractToolsetNames(listed.data)) {
+    const described = await gateway.call('describe_toolset', { toolset_name: toolset, toolsetName: toolset, name: toolset });
+    if (described.isError) continue;
+    const names = extractToolNames(evidenceResult<unknown>(described, `describe ${toolset}`).data);
+    for (const tool of names) {
+      if (!catalog.pie && /^IsPIERunning$/i.test(tool)) catalog.pie = { toolset, tool };
+      if (!catalog.openAssets && /^GetOpenAssets$/i.test(tool)) catalog.openAssets = { toolset, tool };
+      if (!catalog.dirtyPackages && /Get(Dirty|Unsaved)Packages/i.test(tool)) catalog.dirtyPackages = { toolset, tool };
+      if (!catalog.currentMap && /GetCurrent(Map|Level)|GetEditorWorld/i.test(tool)) catalog.currentMap = { toolset, tool };
+      if (!catalog.assetEdges && /Get(Package)?(Referencers|Dependencies)|GetReferencersAndDependencies/i.test(tool)) {
+        catalog.assetEdges = { toolset, tool };
+      }
+      if (!catalog.blueprintInfo && /Get(Blueprint)?(CompileStatus|Info|GraphIssues)|CompileBlueprint/i.test(tool)) {
+        catalog.blueprintInfo = { toolset, tool };
+      }
+    }
+  }
+  return catalog;
 }
 
 function evidenceResult<T>(raw: Awaited<ReturnType<UnrealMcpGateway['call']>>, source: string): UnrealEvidenceResult<T> {
@@ -31,242 +131,112 @@ function evidenceResult<T>(raw: Awaited<ReturnType<UnrealMcpGateway['call']>>, s
   return { data: evidence.value, evidence, raw };
 }
 
-function editorStateScript(): string {
-  return `import unreal
-import json
-import vibeue
-
-def _path(obj):
-    if isinstance(obj, dict): return str(obj.get("refPath", obj.get("path", obj)))
-    try: return obj.get_path_name()
-    except Exception: return str(obj)
-
-state = {"pieRunning": False, "currentMap": "", "dirtyPackages": [], "openAssets": []}
-try:
-    state["pieRunning"] = bool(vibeue.exec_tool("EditorToolset.EditorAppToolset", "IsPIERunning"))
-except Exception:
-    pass
-try:
-    world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
-    state["currentMap"] = world.get_outermost().get_name() if world else ""
-except Exception as exc:
-    state["mapError"] = str(exc)
-try:
-    state["dirtyPackages"] = [_path(p) for p in unreal.EditorLoadingAndSavingUtils.get_dirty_content_packages()]
-    state["dirtyPackages"] += [_path(p) for p in unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages()]
-except Exception as exc:
-    state["dirtyPackagesError"] = str(exc)
-try:
-    state["openAssets"] = [_path(a) for a in vibeue.exec_tool("EditorToolset.EditorAppToolset", "GetOpenAssets")]
-except Exception as exc:
-    state["openAssetsError"] = str(exc)
-try:
-    env = json.loads(unreal.WorkflowService.get_environment())
-    state["environment"] = {key: env.get(key) for key in ("schema", "projectFile", "engineRoot", "engineVersion", "editorPid", "vibeueVersion", "toolsetRegistryAvailable", "lastBuild")}
-except Exception:
-    state["environment"] = {}
-print("${RESULT_MARKER}" + json.dumps(state, separators=(",", ":"), default=str))`;
+function emptyEvidence<T>(value: T): DoctorEvidence<T> {
+  return { value, evidenceSource: 'structuredContent', candidates: ['structuredContent'], parseWarnings: [] };
 }
 
-function scanScript(encodedInput: string): string {
-  return `import unreal
-import json
-import base64
-import vibeue
-
-request = json.loads(base64.b64decode("${encodedInput}").decode("utf-8"))
-result = {"environment": {}, "editor": {}, "inventory": [], "references": [], "blueprints": [], "rules": []}
-
-def _s(value):
-    try: return str(value)
-    except Exception: return ""
-
-def _path(obj):
-    try: return obj.get_path_name()
-    except Exception: return _s(obj)
-
-def _asset_path_from_file(value):
-    normalized = value.replace("\\\\", "/")
-    marker = "/Content/"
-    if marker.lower() in normalized.lower():
-        index = normalized.lower().index(marker.lower()) + len(marker)
-        relative = normalized[index:]
-        if relative.lower().endswith((".uasset", ".umap")): relative = relative.rsplit(".", 1)[0]
-        return "/Game/" + relative
-    if normalized.startswith("Content/"):
-        relative = normalized[len("Content/"):]
-        if relative.lower().endswith((".uasset", ".umap")): relative = relative.rsplit(".", 1)[0]
-        return "/Game/" + relative
-    return normalized.split(".")[0] if normalized.startswith("/Game/") else ""
-
-try:
-    env = json.loads(unreal.WorkflowService.get_environment())
-    result["environment"] = {key: env.get(key) for key in ("schema", "projectFile", "engineRoot", "engineVersion", "editorPid", "vibeueVersion", "toolsetRegistryAvailable", "lastBuild")}
-except Exception:
-    pass
-
-try:
-    world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
-    result["editor"]["currentMap"] = world.get_outermost().get_name() if world else ""
-except Exception as exc:
-    result["editor"]["mapError"] = str(exc)
-try:
-    result["editor"]["pieRunning"] = bool(vibeue.exec_tool("EditorToolset.EditorAppToolset", "IsPIERunning"))
-except Exception:
-    result["editor"]["pieRunning"] = False
-
-registry = unreal.AssetRegistryHelpers.get_asset_registry()
-assets = list(registry.get_assets_by_path("/Game", recursive=True))
-asset_by_path = {}
-for data in assets:
-    package_name = _s(data.package_name)
-    class_name = _s(data.asset_class_path.asset_name) if hasattr(data, "asset_class_path") else _s(data.asset_class)
-    result["inventory"].append({"path": package_name, "class": class_name})
-    asset_by_path[package_name] = data
-
-targets = set()
-for value in request.get("paths", []) + request.get("referenceQueries", []):
-    converted = _asset_path_from_file(value)
-    if converted: targets.add(converted)
-for rule in request.get("rules", []):
-    params = rule.get("params", {})
-    for key in ("asset", "from", "to"):
-        value = params.get(key)
-        if isinstance(value, str) and value.startswith("/Game/"): targets.add(value.split(".")[0])
-
-def _dependencies(package_name):
-    try: return [_s(x) for x in registry.get_dependencies(package_name)]
-    except Exception: return []
-
-def _referencers(package_name):
-    try: return [_s(x) for x in registry.get_referencers(package_name)]
-    except Exception:
-        try: return [_s(x) for x in unreal.EditorAssetLibrary.find_package_referencers_for_asset(package_name, False)]
-        except Exception: return []
-
-expanded = set(targets)
-for target in list(targets):
-    for ref in _referencers(target):
-        if ref.startswith("/Game/"): expanded.add(ref)
-for target in sorted(expanded):
-    for dep in _dependencies(target):
-        if dep.startswith("/Game/"):
-            result["references"].append({"from": target, "to": dep, "direction": "dependency", "resolved": dep in asset_by_path})
-    for ref in _referencers(target):
-        if ref.startswith("/Game/"):
-            result["references"].append({"from": ref, "to": target, "direction": "referencer", "resolved": ref in asset_by_path})
-
-def _blueprint_issues(asset_path):
-    output = []
-    try:
-        info = unreal.BlueprintService.get_blueprint_info(asset_path)
-        compile_status = "Unknown" if info else "LoadFailed"
-    except Exception as exc:
-        return "LoadFailed", [{"ruleId":"blueprint.load", "severity":"P1", "confidence":"confirmed", "evidence":str(exc)}]
-    try:
-        graphs = unreal.BlueprintService.list_graphs(asset_path)
-        for graph_info in graphs:
-            graph_name = _s(graph_info.graph_name)
-            try:
-                summary_result = unreal.BlueprintService.get_graph_summary(asset_path, graph_name)
-                summary = summary_result[1] if isinstance(summary_result, tuple) and summary_result[0] else summary_result
-                graph_status = _s(getattr(summary, "compile_status", ""))
-                if graph_status: compile_status = graph_status
-            except Exception:
-                pass
-            nodes = list(unreal.BlueprintService.get_nodes_in_graph(asset_path, graph_name, 0, "", True))
-            connections = list(unreal.BlueprintService.get_connections(asset_path, graph_name))
-            connected_ids = set()
-            adjacency = {}
-            title_by_id = {}
-            exec_outputs = {}
-            for node in nodes:
-                node_id = _s(node.node_id); title_by_id[node_id] = _s(node.node_title)
-                adjacency[node_id] = []
-                exec_outputs[node_id] = {_s(pin.pin_name) for pin in list(getattr(node, "pins", [])) if _s(pin.pin_type).lower() == "exec" and not bool(pin.is_input)}
-            for connection in connections:
-                source = _s(connection.source_node_id); target = _s(connection.target_node_id)
-                connected_ids.add(source); connected_ids.add(target)
-                if _s(connection.source_pin_name) in exec_outputs.get(source, set()): adjacency.setdefault(source, []).append(target)
-            entry_ids = [_s(n.node_id) for n in nodes if any(k in _s(n.node_type).lower() for k in ("event", "functionentry"))]
-            reachable = set(entry_ids); queue = list(entry_ids)
-            while queue:
-                current = queue.pop(0)
-                for target in adjacency.get(current, []):
-                    if target not in reachable: reachable.add(target); queue.append(target)
-            for node in nodes:
-                node_id = _s(node.node_id); title = _s(node.node_title); node_type = _s(node.node_type)
-                node_label = title + " [" + node_id + "]"
-                lowered = (title + " " + node_type).lower()
-                has_exec = any(_s(pin.pin_type).lower() == "exec" for pin in list(getattr(node, "pins", [])))
-                if node_id not in connected_ids and not any(k in lowered for k in ("comment", "reroute", "functionentry")):
-                    output.append({"ruleId":"blueprint.orphan_node", "severity":"P2", "confidence":"confirmed", "graph":graph_name, "node":node_label, "evidence":"Node has no graph connections."})
-                if any(k in lowered for k in ("k2node_unknown", "unknown node", "placeholder-class", "reinst_")):
-                    output.append({"ruleId":"blueprint.invalid_node", "severity":"P1", "confidence":"confirmed", "graph":graph_name, "node":node_label, "evidence":"Node type or title indicates an unresolved class or invalid node."})
-                if has_exec and entry_ids and node_id not in reachable and node_id in connected_ids and not any(k in lowered for k in ("functionresult", "tunnel")):
-                    output.append({"ruleId":"blueprint.unreachable_exec", "severity":"P2", "confidence":"inferred", "graph":graph_name, "node":node_label, "evidence":"Connected node is not reachable from an event or function entry through the recorded graph edges."})
-                for pin in list(getattr(node, "pins", [])):
-                    pin_name = _s(pin.pin_name).lower(); normalized_pin = pin_name.replace(" ", "").replace("_", ""); pin_type = _s(pin.pin_type).lower()
-                    if pin_type == "exec" and not bool(pin.is_input) and not bool(pin.is_connected) and any(k in normalized_pin for k in ("castfailed", "cancel", "interrupt", "failed")):
-                        output.append({"ruleId":"blueprint.unhandled_failure", "severity":"P2", "confidence":"inferred", "graph":graph_name, "node":node_label, "evidence":"Critical execution output '" + _s(pin.pin_name) + "' is not connected."})
-    except Exception as exc:
-        output.append({"ruleId":"blueprint.graph_read", "severity":"P1", "confidence":"confirmed", "evidence":str(exc)})
-    return compile_status, output
-
-blueprint_classes = ("Blueprint", "WidgetBlueprint", "AnimBlueprint")
-for target in sorted(expanded):
-    data = asset_by_path.get(target)
-    if not data: continue
-    class_name = _s(data.asset_class_path.asset_name) if hasattr(data, "asset_class_path") else _s(data.asset_class)
-    if any(name in class_name for name in blueprint_classes):
-        status, issues = _blueprint_issues(target)
-        result["blueprints"].append({"path":target, "compileStatus":status, "issues":issues})
-
-def _find_node(asset, graph, pattern):
-    try:
-        pattern = pattern.lower()
-        return any(pattern in (_s(n.node_title) + " " + _s(n.node_type)).lower() for n in unreal.BlueprintService.get_nodes_in_graph(asset, graph, 0, "", False))
-    except Exception: return False
-
-for rule in request.get("rules", []):
-    kind = rule.get("kind", ""); params = rule.get("params", {}); passed = False; evidence = ""
-    try:
-        if kind == "asset_exists":
-            passed = params["asset"].split(".")[0] in asset_by_path; evidence = "Asset registry existence check."
-        elif kind == "asset_absent":
-            passed = params["asset"].split(".")[0] not in asset_by_path; evidence = "Asset registry absence check."
-        elif kind in ("reference_exists", "reference_absent"):
-            found = params["to"].split(".")[0] in _dependencies(params["from"].split(".")[0])
-            passed = found if kind == "reference_exists" else not found; evidence = "Asset registry dependency check."
-        elif kind == "property_equals":
-            obj = unreal.EditorAssetLibrary.load_asset(params["asset"])
-            actual = obj.get_editor_property(params["property"]) if obj else None
-            passed = _s(actual) == _s(params.get("expected")); evidence = "Actual property value: " + _s(actual)
-        elif kind in ("blueprint_node_present", "blueprint_node_absent"):
-            found = _find_node(params["asset"], params["graph"], params["node"])
-            passed = found if kind == "blueprint_node_present" else not found; evidence = "Blueprint node lookup."
-        elif kind == "blueprint_path_reaches":
-            nodes = list(unreal.BlueprintService.get_nodes_in_graph(params["asset"], params["graph"], 0, "", True))
-            connections = list(unreal.BlueprintService.get_connections(params["asset"], params["graph"]))
-            starts = [_s(n.node_id) for n in nodes if params["from"].lower() in _s(n.node_title).lower()]
-            goals = {_s(n.node_id) for n in nodes if params["to"].lower() in _s(n.node_title).lower()}
-            exec_outputs = {_s(n.node_id): {_s(p.pin_name) for p in list(getattr(n, "pins", [])) if _s(p.pin_type).lower() == "exec" and not bool(p.is_input)} for n in nodes}
-            edges = {}
-            for c in connections:
-                source = _s(c.source_node_id)
-                if _s(c.source_pin_name) in exec_outputs.get(source, set()): edges.setdefault(source, []).append(_s(c.target_node_id))
-            seen = set(starts); queue = list(starts)
-            while queue:
-                current = queue.pop(0)
-                for target in edges.get(current, []):
-                    if target not in seen: seen.add(target); queue.append(target)
-            passed = bool(goals.intersection(seen)); evidence = "Execution reachability check."
-        else:
-            continue
-    except Exception as exc:
-        evidence = str(exc); passed = False
-    params_path = params.get("asset", params.get("from", "/Game"))
-    result["rules"].append({"id":rule.get("id", kind), "passed":passed, "confidence":"confirmed", "evidence":evidence, "path":params_path})
-
-print("${RESULT_MARKER}" + json.dumps(result, separators=(",", ":"), default=str))`;
+function extractToolsetNames(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map((item) => typeof item === 'string' ? item : String(asRecord(item)?.name ?? asRecord(item)?.toolset ?? '')).filter(Boolean);
+  const record = asRecord(value);
+  if (!record) return [];
+  const nested = record.toolsets ?? record.toolsetNames ?? record.names ?? record.returnValue;
+  return extractToolsetNames(nested);
 }
+
+function extractToolNames(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => typeof item === 'string' ? item : String(asRecord(item)?.name ?? asRecord(item)?.tool ?? asRecord(item)?.tool_name ?? '')).filter(Boolean);
+  }
+  const record = asRecord(value);
+  if (!record) return [];
+  return extractToolNames(record.tools ?? record.toolNames ?? record.returnValue);
+}
+
+export function toGamePath(value: string): string {
+  const normalized = value.replace(/\\/g, '/');
+  const marker = '/Content/';
+  const lower = normalized.toLowerCase();
+  const index = lower.indexOf(marker.toLowerCase());
+  if (index >= 0) {
+    let relative = normalized.slice(index + marker.length);
+    if (/\.(uasset|umap)$/i.test(relative)) relative = relative.replace(/\.(uasset|umap)$/i, '');
+    return `/Game/${relative}`;
+  }
+  if (normalized.startsWith('Content/')) {
+    let relative = normalized.slice('Content/'.length);
+    if (/\.(uasset|umap)$/i.test(relative)) relative = relative.replace(/\.(uasset|umap)$/i, '');
+    return `/Game/${relative}`;
+  }
+  if (normalized.startsWith('/Game/')) return normalized.split('.')[0];
+  return '';
+}
+
+function asBoolean(value: unknown): boolean {
+  if (typeof value === 'boolean') return value;
+  if (isRecord(value) && typeof value.pieRunning === 'boolean') return value.pieRunning;
+  return Boolean(value);
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => {
+    if (typeof item === 'string') return item;
+    const record = asRecord(item);
+    return String(record?.refPath ?? record?.path ?? record?.assetPath ?? item);
+  });
+}
+
+function asInventory(value: unknown): UnrealScanResult['inventory'] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => {
+    const record = asRecord(item) ?? {};
+    return { path: String(record.path ?? ''), class: String(record.class ?? '') };
+  }).filter((item) => item.path);
+}
+
+function asReferences(value: unknown): UnrealScanResult['references'] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => {
+    const record = asRecord(item) ?? {};
+    const direction: 'dependency' | 'referencer' = record.direction === 'referencer' ? 'referencer' : 'dependency';
+    return {
+      from: String(record.from ?? ''),
+      to: String(record.to ?? ''),
+      direction,
+      resolved: record.resolved !== false,
+    };
+  }).filter((item) => item.from && item.to);
+}
+
+function asBlueprints(value: unknown): UnrealScanResult['blueprints'] {
+  const items = Array.isArray(value) ? value : Array.isArray(asRecord(value)?.blueprints) ? asRecord(value)!.blueprints as unknown[] : [];
+  return items.map((item) => {
+    const record = asRecord(item) ?? {};
+    const issues = Array.isArray(record.issues) ? record.issues : [];
+    return {
+      path: String(record.path ?? ''),
+      compileStatus: String(record.compileStatus ?? record.compile_status ?? 'Unknown'),
+      issues: issues.map((issue) => {
+        const row = asRecord(issue) ?? {};
+        const severity: DoctorSeverity = row.severity === 'P0' || row.severity === 'P1' || row.severity === 'P2' ? row.severity : 'P2';
+        return {
+          ruleId: String(row.ruleId ?? 'blueprint.graph'),
+          severity,
+          graph: typeof row.graph === 'string' ? row.graph : undefined,
+          node: typeof row.node === 'string' ? row.node : undefined,
+          evidence: String(row.evidence ?? ''),
+        };
+      }),
+    };
+  }).filter((item) => item.path);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function unique(values: string[]): string[] { return [...new Set(values.filter(Boolean))]; }

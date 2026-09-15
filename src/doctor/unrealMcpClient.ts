@@ -9,6 +9,22 @@ export interface UnrealMcpGateway {
   close(): Promise<void>;
 }
 
+export async function callNativeTool(
+  gateway: UnrealMcpGateway,
+  toolset: string,
+  tool: string,
+  args: Record<string, unknown> = {},
+  options?: { timeoutMs?: number; retry?: boolean },
+): Promise<McpToolOutput> {
+  return gateway.call('call_tool', {
+    toolset_name: toolset,
+    toolsetName: toolset,
+    tool_name: tool,
+    toolName: tool,
+    arguments: args,
+  }, options);
+}
+
 export interface McpToolOutput {
   text: string;
   structured?: Record<string, unknown>;

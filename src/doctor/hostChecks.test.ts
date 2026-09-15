@@ -64,20 +64,15 @@ function emptyRun(ctx: StandaloneContext): DoctorRun {
   return {
     schema: 'enginelink.doctor-run.v1',
     id: 'test-run',
-    mode: 'preflight',
     status: 'running',
     startedAt: new Date().toISOString(),
     project: ctx.project.uprojectPath,
     projectRoot: ctx.projectRoot,
     requestedPaths: [],
-    referenceQueries: [],
-    scenarioNames: [],
-    progress: { phase: 'preflight', completed: 0, total: 2 },
+    phase: 'preflight',
     coverage: {},
     editor: {},
     build: {},
     issues: [],
-    artifacts: [],
-    scenarios: [],
   };
 }

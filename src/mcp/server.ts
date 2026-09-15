@@ -42,28 +42,17 @@ async function dispatch(name: string, args: Record<string, unknown>): Promise<un
   };
   switch (name) {
     case 'enginelink_get_environment': return service.getEnvironment();
-    case 'enginelink_project_doctor_start': return service.startProjectDoctor({
-      ...context,
-      mode: stringArg(args, 'mode') as 'preflight' | 'changed' | 'scenario' | undefined,
+    case 'enginelink_project_doctor': return service.runProjectDoctor({
       paths: stringArrayArg(args, 'paths'),
-      referenceQueries: stringArrayArg(args, 'referenceQueries'),
-      scenarioNames: stringArrayArg(args, 'scenarioNames'),
-      baselineRunId: stringArg(args, 'baselineRunId'),
     });
-    case 'enginelink_get_doctor_run': return service.getProjectDoctorRun(requiredString(args, 'runId'));
-    case 'enginelink_cancel_doctor_run': return service.cancelProjectDoctorRun(requiredString(args, 'runId'));
     case 'enginelink_build': return service.build(build);
     case 'enginelink_clean': return service.clean({ ...build, confirm: args.confirm === true });
-    case 'enginelink_get_build_diagnostics': return service.getBuildDiagnostics();
-    case 'enginelink_generate_compile_commands': return service.generateCompileCommands(build);
-    case 'enginelink_get_editor_process': return service.getEditorProcess();
-    case 'enginelink_launch_editor': return service.launchEditor(context);
-    case 'enginelink_run_acceptance': return service.runAcceptance({
+    case 'enginelink_generate_compile_commands': return service.generateCompileCommands({
       ...context,
-      tier: requiredString(args, 'tier'),
-      evidenceNotes: stringArg(args, 'evidenceNotes'),
+      configuration: build.configuration,
+      platform: build.platform,
     });
-    case 'enginelink_get_run': return service.getRun(requiredString(args, 'runId'));
+    case 'enginelink_launch_editor': return service.launchEditor(context);
     default: throw new Error(`Unknown EngineLink tool: ${name}`);
   }
 }
@@ -75,12 +64,6 @@ function getOption(name: string): string | undefined {
 
 function stringArg(args: Record<string, unknown>, name: string): string | undefined {
   return typeof args[name] === 'string' ? args[name] as string : undefined;
-}
-
-function requiredString(args: Record<string, unknown>, name: string): string {
-  const value = stringArg(args, name);
-  if (!value) throw new Error(`Missing required argument: ${name}`);
-  return value;
 }
 
 function stringArrayArg(args: Record<string, unknown>, name: string): string[] | undefined {

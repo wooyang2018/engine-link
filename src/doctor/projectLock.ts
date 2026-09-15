@@ -1,11 +1,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { DOCTOR_LOCK_STALE_MS } from './types';
 
 export class ProjectDoctorLock {
   private handle: fs.promises.FileHandle | undefined;
   private lockPath: string | undefined;
 
-  constructor(private readonly projectRoot: string, private readonly staleMs = 10 * 60 * 1000) {}
+  constructor(private readonly projectRoot: string, private readonly staleMs = DOCTOR_LOCK_STALE_MS) {}
 
   async acquire(runId: string): Promise<void> {
     const directory = path.join(this.projectRoot, 'Saved', 'EngineLink');

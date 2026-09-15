@@ -2,9 +2,9 @@
 
 🌐 [enginelink.dev](https://enginelink.dev)
 
-**Host-side Unreal Engine development bridge** — discover, build, launch, diagnose, and verify UE projects from an IDE, CLI, or AI agent.
+**Host-side Unreal Engine development bridge** — discover, build, launch, and diagnose UE projects from an IDE, CLI, or AI agent.
 
-EngineLink owns the work that happens outside Unreal Editor: project/toolchain discovery, cold UBT builds, Editor process launch, compile databases, diagnostics, and project acceptance commands. Editor-side assets, PIE, transactions, and Live Coding belong to Unreal's native MCP and extensions such as VibeUE. The two MCP servers are independent and either can be used without the other.
+EngineLink owns the work that happens outside Unreal Editor: project/toolchain discovery, cold UBT builds, Editor process launch, compile databases, diagnostics, and Project Doctor. Editor-side assets, PIE, transactions, and Live Coding belong to Unreal's native MCP. The two MCP servers are independent and either can be used without the other. EngineLink does not assume VibeUE is installed and does not run gameplay tests.
 
 > 🧪 **Status:** Early preview. Windows-only for now.
 
@@ -132,7 +132,6 @@ Once everything is installed:
    - Finds your `.uproject` and parses `EngineAssociation`
    - Discovers the matching UE installation from the registry
    - Locates VS Build Tools
-   - Generates Cursor rules (`.cursor/rules/*.mdc`)
    - Generates `compile_commands.json` (if Clang is installed)
    - Creates/updates `.clangd` for MSVC suppression
 3. The status bar shows your project name, engine version, and build actions
@@ -162,8 +161,7 @@ If auto-detection fails, override paths in [Configuration](#configuration).
 - **Independent MCP server** — runs without the Cursor extension and exposes only host-side EngineLink operations
 - **CLI** — exposes the same core operations to humans and CI
 - **Project MCP registration** — registers EngineLink for Cursor, Codex, and Claude Code when the extension activates
-- **Cursor rules** — generates `.cursor/rules/*.mdc` files so the AI writes idiomatic Unreal C++
-- **UE Project Doctor** — safety-gated changed-scope asset/Blueprint diagnostics, declarative rules, repeatable VibeUE scenarios, and baseline comparison
+- **UE Project Doctor** — one host + native Unreal MCP diagnostic run for toolchain, Editor readiness, Git/`--path` asset references, and Blueprint compile/graph issues
 
 ### Editor UX
 
@@ -225,46 +223,30 @@ Registration is idempotent and preserves unrelated MCP servers. Cursor and Claud
 
 | Tool | Description |
 |---|---|
-| `enginelink_get_environment` | Project, engine, toolchain, and build defaults |
-| `enginelink_project_doctor_start` | Start a persisted `preflight`, `changed`, or `scenario` diagnostic run |
-| `enginelink_get_doctor_run` | Poll progress and read the final evidence-backed Doctor report |
-| `enginelink_cancel_doctor_run` | Cancel a run owned by this EngineLink process and request teardown |
+| `enginelink_get_environment` | Project, engine, toolchain, build defaults, and current Editor process |
+| `enginelink_project_doctor` | Run a read-only Project Doctor diagnostic to completion; returns `enginelink.doctor-view.v1` |
 | `enginelink_build` | Cold build; refuses while this project is open in Editor |
 | `enginelink_clean` | Clean build artifacts with explicit confirmation |
-| `enginelink_get_build_diagnostics` | Structured diagnostics from the latest cold build |
 | `enginelink_generate_compile_commands` | Generate and post-process `compile_commands.json` |
-| `enginelink_get_editor_process` | Find the Editor process for this project |
 | `enginelink_launch_editor` | Launch Editor or return the existing PID |
-| `enginelink_run_acceptance` | Run the project-configured acceptance entrypoint |
-| `enginelink_get_run` | Read a host-side run record |
 
 Live Coding is deliberately not an EngineLink MCP tool. Agents should call Unreal MCP's Live Coding toolset directly.
 
 ### CLI and client configuration
 
 ```powershell
-node dist/cli.js project-doctor --project D:/Workspace/MyGame --mode changed
-node dist/cli.js project-doctor --project D:/Workspace/MyGame --mode scenario --scenario single-client-smoke
+node dist/cli.js project-doctor --project D:/Workspace/MyGame
+node dist/cli.js project-doctor --project D:/Workspace/MyGame --path Content/BP/BP_Test.uasset
 node dist/cli.js build --project D:/Workspace/MyGame --reason "verify C++ change"
-node dist/cli.js accept --project D:/Workspace/MyGame --tier L2
 ```
 
-See [UE Project Doctor](docs/project-doctor.md) for rule and scenario schemas, safety behavior, report locations, and baseline verification.
+See [MCP / CLI tools](docs/mcp-tools.md) for inputs, outputs, and boundaries of the six tools. See [UE Project Doctor](docs/project-doctor.md) for coverage vs issues and why gameplay tests stay in the game project's CQTest suite.
 
 ---
 
-## Cursor Rules
+## Unreal C++ conventions
 
-On project detection, EngineLink generates `.cursor/rules/*.mdc` files (never overwrites existing ones) so the AI follows UE conventions:
-
-| Rule File | Covers |
-|---|---|
-| `unreal-conventions.mdc` | Class prefixes (`U`, `A`, `F`, `E`, `I`, `T`), PascalCase, UE types |
-| `unreal-macros.mdc` | `UCLASS`, `UPROPERTY`, `UFUNCTION`, `USTRUCT`, `UENUM` |
-| `unreal-build-system.mdc` | `.Build.cs`, `.Target.cs`, modules, plugins |
-| `unreal-patterns.mdc` | Delegates, timers, subsystems, Gameplay Tags, Enhanced Input, logging |
-
-> **This is where we need the most help.** If you're an experienced UE developer, your feedback on these rules would be incredibly valuable — please open an issue or PR!
+EngineLink does **not** write `.cursor/rules/*.mdc`, `AGENTS.md`, or `CLAUDE.md` into user projects. Naming, reflection macros, modules, and common patterns are documented as study notes: [docs/ue-cpp-study-notes.md](docs/ue-cpp-study-notes.md).
 
 ---
 
@@ -302,8 +284,7 @@ This project is early and there's a lot to improve. Jump in!
 5. Open a pull request
 
 **Areas where help is needed:**
-- **Testing** — Vitest is set up but no tests exist yet
-- **Cursor rules** — UE experts: are the rules correct? What's missing?
+- **Testing** — Vitest is set up but coverage is still thin
 - **macOS / Linux** — host-side engine and toolchain discovery are Windows-first right now
 
 ---
@@ -331,8 +312,9 @@ src/
 ├── config/
 │   └── settings.ts               # Typed settings accessor
 ├── cursor/
-│   ├── rulesGenerator.ts         # .cursor/rules/*.mdc generation
-│   └── clangdConfig.ts           # .clangd managed block upsert
+│   ├── clangdConfig.ts           # .clangd managed block upsert
+│   ├── placeCompileCommands.ts   # copy UBT compile DB to project root
+│   └── vscodeSettings.ts
 ├── detection/
 │   ├── projectDetector.ts        # .uproject scanning and selection
 │   ├── engineDiscovery.ts        # Engine discovery (registry + filesystem)

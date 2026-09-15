@@ -14,12 +14,12 @@ import { detectBuildTools } from './detection/buildToolsDetector';
 import { EngineLinkSettings } from './config/settings';
 import { StatusBarManager } from './ui/statusBar';
 import { createOutputChannel } from './ui/outputChannel';
-import { generateCursorRules } from './cursor/rulesGenerator';
 import { ensureClangdConfig, ensureIdeOverridesHeader } from './cursor/clangdConfig';
 import { ensureVscodeSettings } from './cursor/vscodeSettings';
 import { registerProjectMcpServers } from './mcp/clientRegistration';
 import { EngineLinkTaskProvider } from './build/taskProvider';
 import type { EngineLinkContext } from './types';
+import { loadProjectConfig } from './core/config';
 
 let context: EngineLinkContext;
 let statusBar: StatusBarManager;
@@ -39,6 +39,7 @@ export async function activate(extensionContext: vscode.ExtensionContext) {
     diagnosticCollection: vscode.languages.createDiagnosticCollection(EXTENSION_ID),
     lastBuildErrors: [],
     lastBuildResult: undefined,
+    cliPath: path.join(extensionContext.extensionPath, 'dist', 'cli.js'),
   };
 
   outputChannel.appendLine('[EngineLink] Activating...');
@@ -126,12 +127,24 @@ async function runDetectionPipeline(options?: { allowAutoCompileDb?: boolean }) 
   }
 
   outputChannel.appendLine(`[EngineLink] Project: ${context.project.name} (${context.project.engineAssociation})`);
+  try {
+    const projectConfig = await loadProjectConfig(context.project.projectRoot);
+    context.editorTargetName = projectConfig.build?.editorTargetName?.trim() || undefined;
+  } catch {
+    context.editorTargetName = undefined;
+  }
   if (context.project.targets.length > 0) {
-    const { pickTargetForType } = await import('./parsers/targetParser');
-    const editorTarget = pickTargetForType(context.project, 'Editor');
-    outputChannel.appendLine(
-      `[EngineLink] UBT targets discovered: ${context.project.targets.length} (.Target.cs); Editor target: ${editorTarget}`,
-    );
+    try {
+      const { pickTargetForType } = await import('./parsers/targetParser');
+      const editorTarget = pickTargetForType(context.project, 'Editor', {
+        editorTargetName: context.editorTargetName,
+      });
+      outputChannel.appendLine(
+        `[EngineLink] UBT targets discovered: ${context.project.targets.length} (.Target.cs); Editor target: ${editorTarget}`,
+      );
+    } catch (err) {
+      outputChannel.appendLine(`[EngineLink] ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
   await setContext(ContextKeys.ProjectDetected, true);
 
@@ -180,16 +193,6 @@ async function runDetectionPipeline(options?: { allowAutoCompileDb?: boolean }) 
   }
 
   statusBar.update(context, settings);
-
-  // Generate Cursor AI rules
-  if (context.project) {
-    try {
-      await generateCursorRules(context.project);
-      outputChannel.appendLine('[EngineLink] Cursor rules generated in .cursor/rules/');
-    } catch (err) {
-      outputChannel.appendLine(`[EngineLink] Failed to generate Cursor rules: ${err}`);
-    }
-  }
 
   // clangd: suppress MSVC vs Clang intrinsic false positives in IDE
   if (context.project && settings.upsertClangdConfig) {

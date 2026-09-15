@@ -1,7 +1,7 @@
 import type { McpToolOutput } from './unrealMcpClient';
 import { parseJsonValue } from '../parsers/safeJson';
 
-export type DoctorEvidenceSource = 'structuredContent' | 'textJson' | 'persistedArtifact' | 'marker';
+export type DoctorEvidenceSource = 'structuredContent' | 'textJson';
 
 export interface DoctorEvidence<T> {
   value: T;
@@ -19,14 +19,12 @@ export class DoctorEvidenceConflictError extends DoctorEvidenceError {
   constructor(message: string, raw?: unknown) { super(message, raw); this.name = 'DoctorEvidenceConflictError'; }
 }
 
-export function resolveDoctorEvidence<T>(
-  output: McpToolOutput,
-  source: string,
-  persisted?: unknown,
-): DoctorEvidence<T> {
+export function resolveDoctorEvidence<T>(output: McpToolOutput, source: string): DoctorEvidence<T> {
   const candidates: Array<{ source: DoctorEvidenceSource; value: unknown }> = [];
   const warnings: string[] = [];
-  if (output.structured !== undefined) candidates.push({ source: 'structuredContent', value: unwrap(output.structured, `${source}:structuredContent`) });
+  if (output.structured !== undefined) {
+    candidates.push({ source: 'structuredContent', value: unwrap(output.structured, `${source}:structuredContent`) });
+  }
 
   const textCandidates = [
     ...output.content.filter((item): item is Extract<typeof item, { type: 'text' }> => item.type === 'text').map((item) => item.text),
@@ -34,25 +32,15 @@ export function resolveDoctorEvidence<T>(
   ].filter((value, index, values) => value.trim() && values.indexOf(value) === index);
   for (const text of textCandidates) {
     const trimmed = text.replace(/^\uFEFF/, '').trim();
-    if (trimmed.startsWith('{') || trimmed.startsWith('[') || !trimmed.includes('ENGINELINK_DOCTOR_RESULT=')) {
-      try { candidates.push({ source: 'textJson', value: unwrap(parseJsonValue(trimmed, `${source}:text`), `${source}:text envelope`) }); }
-      catch (error) { warnings.push(error instanceof Error ? error.message : String(error)); }
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) continue;
+    try {
+      candidates.push({ source: 'textJson', value: unwrap(parseJsonValue(trimmed, `${source}:text`), `${source}:text envelope`) });
+    } catch (error) {
+      warnings.push(error instanceof Error ? error.message : String(error));
     }
   }
-  if (persisted !== undefined) candidates.push({ source: 'persistedArtifact', value: persisted });
 
-  const marker = 'ENGINELINK_DOCTOR_RESULT=';
-  for (const text of textCandidates) {
-    const trimmed = text.replace(/^\uFEFF/, '').trim();
-    if (trimmed.startsWith('{') || trimmed.startsWith('[')) continue;
-    const index = text.lastIndexOf(marker);
-    if (index < 0) continue;
-    try { candidates.push({ source: 'marker', value: parseJsonValue(text.slice(index + marker.length), `${source}:marker`) }); }
-    catch (error) { warnings.push(error instanceof Error ? error.message : String(error)); }
-  }
-
-  const order: DoctorEvidenceSource[] = ['structuredContent', 'textJson', 'persistedArtifact', 'marker'];
-  const chosen = candidates.sort((a, b) => order.indexOf(a.source) - order.indexOf(b.source))[0];
+  const chosen = candidates.find((candidate) => candidate.source === 'structuredContent') ?? candidates[0];
   if (!chosen) throw new DoctorEvidenceError(`No usable Doctor evidence was found for ${source}. ${warnings.join(' ')}`.trim(), output);
   const chosenNormalized = canonical(chosen.value);
   const conflicts = candidates.filter((candidate) => canonical(candidate.value) !== chosenNormalized);
@@ -65,16 +53,19 @@ export function resolveDoctorEvidence<T>(
   };
 }
 
+export function unwrapNativeValue(value: unknown): unknown {
+  if (!isRecord(value)) return value;
+  if ('returnValue' in value) return unwrapNativeValue(value.returnValue);
+  return value;
+}
+
 function unwrap(value: unknown, source: string): unknown {
   if (!isRecord(value)) return value;
   if (typeof value.output === 'string') {
     const text = value.output.replace(/^\uFEFF/, '').trim();
     if (text.startsWith('{') || text.startsWith('[')) return unwrap(parseJsonValue(text, source), source);
-    const marker = 'ENGINELINK_DOCTOR_RESULT=';
-    const index = text.lastIndexOf(marker);
-    if (index >= 0) return parseJsonValue(text.slice(index + marker.length), `${source}:marker`);
   }
-  return value;
+  return unwrapNativeValue(value);
 }
 
 function canonical(value: unknown): string {

@@ -5,18 +5,13 @@ import type { McpToolOutput } from './unrealMcpClient';
 const output = (text = '', structured?: Record<string, unknown>): McpToolOutput => ({ text, structured, content: text ? [{ type: 'text', text }] : [], isError: false });
 
 describe('Doctor MCP evidence resolution', () => {
-  it('uses the documented source priority', () => {
+  it('uses structuredContent then text JSON', () => {
     expect(resolveDoctorEvidence(output('', { ok: true }), 'test').evidenceSource).toBe('structuredContent');
     expect(resolveDoctorEvidence(output('{"ok":true}'), 'test').evidenceSource).toBe('textJson');
-    expect(resolveDoctorEvidence(output('plain'), 'test', { ok: true }).evidenceSource).toBe('persistedArtifact');
-    expect(resolveDoctorEvidence(output('log\nENGINELINK_DOCTOR_RESULT={"ok":true}'), 'test').evidenceSource).toBe('marker');
   });
 
-  it('keeps a broken lower-priority marker as a warning', () => {
-    const result = resolveDoctorEvidence(output('ENGINELINK_DOCTOR_RESULT={bad', { ok: true }), 'test');
-    expect(result.value).toEqual({ ok: true });
-    expect(result.parseWarnings.length).toBeGreaterThan(0);
-    expect(result.conflict).toBeUndefined();
+  it('does not parse print markers as evidence', () => {
+    expect(() => resolveDoctorEvidence(output('log\nENGINELINK_DOCTOR_RESULT={"ok":true}'), 'test')).toThrow(/No usable Doctor evidence/);
   });
 
   it('reports conflicting valid sources', () => {

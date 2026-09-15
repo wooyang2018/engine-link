@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { calculateDoctorStatus, isSuccessfulDoctorStatus, summarizeDoctor } from './status';
+import { calculateDoctorStatus, isSuccessfulDoctorStatus } from './status';
 import type { DoctorIssue, DoctorRun } from './types';
 
 describe('Doctor final status', () => {
   const coverage: DoctorRun['coverage'] = { editor: { status: 'completed' } };
   const issue = (severity: DoctorIssue['severity']): DoctorIssue => ({
-    id: severity, ruleId: severity, severity, path: '/Game', evidence: 'e', impact: 'i', verification: 'v',
-    recommendation: 'r', confidence: 'confirmed', discoveredAt: 'now', sessionId: 'run', source: 'test',
+    id: severity, ruleId: severity, severity, path: '/Game', evidence: 'e', recommendation: 'r',
   });
 
   it.each([
@@ -16,13 +15,7 @@ describe('Doctor final status', () => {
     [[], { editor: { status: 'unavailable' as const } }, 'incomplete'],
     [[], { editor: { status: 'incomplete' as const } }, 'incomplete'],
   ])('maps issues and coverage to %s', (issues, actualCoverage, expected) => {
-    expect(calculateDoctorStatus({ mode: 'changed', issues, coverage: actualCoverage }).status).toBe(expected);
-  });
-
-  it('reports completion and finding/blocking counts', () => {
-    expect(summarizeDoctor({ coverage, issues: [issue('P1'), issue('P2')] })).toMatchObject({
-      total: 2, checksComplete: true, hasFindings: true, hasBlockingIssues: true, p1: 1, p2: 1, confirmed: 2,
-    });
+    expect(calculateDoctorStatus({ issues, coverage: actualCoverage }).status).toBe(expected);
   });
 
   it('uses CLI success semantics for both passing states', () => {
@@ -30,6 +23,6 @@ describe('Doctor final status', () => {
     expect(isSuccessfulDoctorStatus('passed_with_findings')).toBe(true);
     expect(isSuccessfulDoctorStatus('failed')).toBe(false);
     expect(isSuccessfulDoctorStatus('incomplete')).toBe(false);
-    expect(isSuccessfulDoctorStatus('cancelled')).toBe(false);
+    expect(isSuccessfulDoctorStatus('running')).toBe(false);
   });
 });

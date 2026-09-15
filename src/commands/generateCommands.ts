@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import * as fs from 'fs';
 import { generateClangDatabaseCommandLine, formatCommandLine } from '../build/ubt';
 import { spawnAsync } from '../platform/process';
 import { fileExists } from '../platform/paths';
@@ -10,6 +9,7 @@ import {
   postProcessCompileCommandsFile,
   type PostProcessResult,
 } from '../cursor/compileCommandsPostProcess';
+import { placeCompileCommands } from '../cursor/placeCompileCommands';
 import type { EngineLinkContext } from '../types';
 import type { EngineLinkSettings } from '../config/settings';
 
@@ -25,9 +25,12 @@ export async function generateCompileCommands(
     return;
   }
 
-  const cmd = generateClangDatabaseCommandLine(ctx.engine, ctx.project, {
+  const project = ctx.project;
+  const engine = ctx.engine;
+  const cmd = generateClangDatabaseCommandLine(engine, project, {
     configuration: settings.buildConfiguration,
     platform: settings.platform,
+    editorTargetName: ctx.editorTargetName,
   });
 
   await vscode.window.withProgress(
@@ -61,12 +64,14 @@ export async function generateCompileCommands(
         return;
       }
 
-      const ubtWrittenPath = extractClangDatabasePath(ubtOutput.join('\n'));
+      const placed = await placeCompileCommands({
+        projectRoot: project.projectRoot,
+        engineRoot: engine.root,
+        ubtOutput: ubtOutput.join('\n'),
+        onLog: (line) => ctx.outputChannel.appendLine(line),
+      });
 
-      // Find and copy compile_commands.json to project root (UBT often writes under engine root)
-      const placed = await findAndPlaceCompileCommands(ctx, ubtWrittenPath);
-
-      if (!placed) {
+      if (!placed.ok) {
         vscode.window.showWarningMessage(
           'EngineLink: compile_commands.json generated but could not be located. Check UBT output.',
         );
@@ -209,98 +214,3 @@ async function needsEngineHeaderPostProcess(projectRoot: string, engineRoot: str
   }
 }
 
-/**
- * Parse UBT log line: "ClangDatabase written to C:\...\compile_commands.json"
- */
-function extractClangDatabasePath(ubtOutput: string): string | undefined {
-  const m = ubtOutput.match(/ClangDatabase written to\s+(.+?)(?:\r?\n|$)/im);
-  if (!m) return undefined;
-  return m[1].trim().replace(/[/\\]+$/, '');
-}
-
-/**
- * Search for the generated compile_commands.json and copy to project root.
- * UBT 5.x often writes next to the engine (e.g. UE_5.7\compile_commands.json), not inside the .uproject folder.
- */
-export async function findAndPlaceCompileCommands(
-  ctx: EngineLinkContext,
-  ubtReportedPath?: string,
-): Promise<boolean> {
-  if (!ctx.project || !ctx.engine) return false;
-
-  const projectRoot = ctx.project.projectRoot;
-  const targetPath = path.join(projectRoot, 'compile_commands.json');
-
-  const tryCopyFrom = async (sourcePath: string, label: string): Promise<boolean> => {
-    if (!(await fileExists(sourcePath))) return false;
-    const normalized = path.normalize(sourcePath);
-    if (normalized === path.normalize(targetPath)) {
-      ctx.outputChannel.appendLine(`[EngineLink] compile_commands.json at project root (${label}).`);
-      return true;
-    }
-    ctx.outputChannel.appendLine(`[EngineLink] Found compile_commands.json (${label}): ${normalized}`);
-    ctx.outputChannel.appendLine(`[EngineLink] Copying to project root: ${targetPath}`);
-    await fs.promises.copyFile(normalized, targetPath);
-    return true;
-  };
-
-  // 1) Path printed by this UBT invocation (most reliable across UE versions).
-  // Prefer it over an existing project-root file so Generate never post-processes
-  // a stale database left by an earlier invocation.
-  if (ubtReportedPath && (await tryCopyFrom(ubtReportedPath, 'UBT output'))) {
-    return true;
-  }
-
-  // 2) Engine root (common on UE 5.5+)
-  const engineRootDb = path.join(ctx.engine.root, 'compile_commands.json');
-  if (await tryCopyFrom(engineRootDb, 'engine root')) {
-    return true;
-  }
-
-  // 3) Under Intermediate/Build
-  const searchPaths = [
-    path.join(projectRoot, 'Intermediate', 'Build'),
-    path.join(ctx.engine.root, 'Intermediate', 'Build'),
-  ];
-
-  for (const searchBase of searchPaths) {
-    const found = await findFileRecursive(searchBase, 'compile_commands.json', 6);
-    if (found && (await tryCopyFrom(found, 'Intermediate/Build search'))) {
-      return true;
-    }
-  }
-
-  ctx.outputChannel.appendLine(
-    '[EngineLink] No compile_commands.json produced by this generation was found; refusing to use an existing project-root file.',
-  );
-  return false;
-}
-
-/**
- * Recursively search for a file up to a given depth.
- */
-async function findFileRecursive(
-  dir: string,
-  filename: string,
-  maxDepth: number,
-): Promise<string | undefined> {
-  if (maxDepth <= 0) return undefined;
-
-  try {
-    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isFile() && entry.name === filename) {
-        return fullPath;
-      }
-      if (entry.isDirectory()) {
-        const found = await findFileRecursive(fullPath, filename, maxDepth - 1);
-        if (found) return found;
-      }
-    }
-  } catch {
-    // Directory not readable
-  }
-
-  return undefined;
-}

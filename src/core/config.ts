@@ -3,23 +3,11 @@ import * as path from 'path';
 import type { BuildConfiguration, BuildPlatform, BuildTargetType } from '../types';
 import { parseJsonValue } from '../parsers/safeJson';
 
-export interface AcceptanceConfig {
-  command: string;
-  args?: string[];
-  tierArgument?: string;
-  evidenceRoot?: string;
-}
-
 export interface UnrealMcpConfig {
   /** Local Streamable HTTP endpoint exposed by Unreal Editor. */
   url?: string;
   connectTimeoutMs?: number;
   requestTimeoutMs?: number;
-}
-
-export interface DoctorConfig {
-  rulesDirectory?: string;
-  scenariosDirectory?: string;
 }
 
 export interface EngineLinkProjectConfig {
@@ -30,11 +18,11 @@ export interface EngineLinkProjectConfig {
     configuration?: BuildConfiguration;
     targetType?: BuildTargetType;
     platform?: BuildPlatform;
+    /** Explicit UBT Editor target (e.g. LyraEditor). Used for Editor builds and compile_commands. */
+    editorTargetName?: string;
   };
   editor?: { map?: string; args?: string[] };
-  acceptance?: AcceptanceConfig;
   unrealMcp?: UnrealMcpConfig;
-  doctor?: DoctorConfig;
   agentGuide?: string;
 }
 

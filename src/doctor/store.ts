@@ -1,27 +1,32 @@
+import type { DoctorCoverage, DoctorRun, DoctorViewIssue } from './types';
 import * as fs from 'fs';
 import * as path from 'path';
-import type { DoctorRun } from './types';
-import { parseJsonValue } from '../parsers/safeJson';
+
+export interface DoctorPersistedRun {
+  schema: 'enginelink.doctor-run.v1';
+  id: string;
+  status: DoctorRun['status'];
+  startedAt: string;
+  finishedAt?: string;
+  project: string;
+  projectRoot: string;
+  requestedPaths: string[];
+  coverage: Record<string, DoctorCoverage>;
+  issues: DoctorViewIssue[];
+  conclusion?: string;
+  error?: string;
+}
 
 export class DoctorStore {
   constructor(private readonly projectRoot: string) {}
 
   async save(run: DoctorRun): Promise<void> {
+    const persisted = persistable(run);
     const dir = this.runDirectory(run.id);
     await fs.promises.mkdir(dir, { recursive: true });
-    await atomicWrite(path.join(dir, 'summary.json'), JSON.stringify(run, null, 2));
-    await atomicWrite(path.join(dir, 'report.md'), renderMarkdown(run));
-    await atomicWrite(path.join(this.rootDirectory(), 'latest.json'), JSON.stringify(run, null, 2));
-  }
-
-  async appendEvent(runId: string, event: Record<string, unknown>): Promise<void> {
-    const dir = this.runDirectory(runId);
-    await fs.promises.mkdir(dir, { recursive: true });
-    await fs.promises.appendFile(
-      path.join(dir, 'events.jsonl'),
-      JSON.stringify({ timestamp: new Date().toISOString(), ...event }) + '\n',
-      'utf8',
-    );
+    await atomicWrite(path.join(dir, 'summary.json'), JSON.stringify(persisted, null, 2));
+    await atomicWrite(path.join(dir, 'report.md'), renderMarkdown(persisted));
+    await atomicWrite(path.join(this.rootDirectory(), 'latest.json'), JSON.stringify(persisted, null, 2));
   }
 
   async writeArtifact(runId: string, name: string, value: unknown): Promise<string> {
@@ -32,12 +37,6 @@ export class DoctorStore {
     return file;
   }
 
-  async get(runId: string): Promise<DoctorRun> {
-    validateRunId(runId);
-    const file = path.join(this.runDirectory(runId), 'summary.json');
-    return parseJsonValue<DoctorRun>(await fs.promises.readFile(file), file);
-  }
-
   runDirectory(runId: string): string {
     validateRunId(runId);
     return path.join(this.rootDirectory(), runId);
@@ -46,6 +45,29 @@ export class DoctorStore {
   private rootDirectory(): string {
     return path.join(this.projectRoot, 'Saved', 'EngineLink', 'Doctor', 'Runs');
   }
+}
+
+export function persistable(run: DoctorRun): DoctorPersistedRun {
+  const coverage: Record<string, DoctorCoverage> = {};
+  for (const [name, item] of Object.entries(run.coverage)) {
+    coverage[name] = { status: item.status, ...(item.detail ? { detail: item.detail } : {}) };
+  }
+  return {
+    schema: run.schema,
+    id: run.id,
+    status: run.status,
+    startedAt: run.startedAt,
+    finishedAt: run.finishedAt,
+    project: run.project,
+    projectRoot: run.projectRoot,
+    requestedPaths: run.requestedPaths,
+    coverage,
+    issues: run.issues.map(({ ruleId, severity, path: issuePath, evidence, recommendation }) => ({
+      ruleId, severity, path: issuePath, evidence, recommendation,
+    })),
+    conclusion: run.conclusion,
+    error: run.error,
+  };
 }
 
 async function atomicWrite(file: string, content: string): Promise<void> {
@@ -62,54 +84,28 @@ function validateRunId(runId: string): void {
   if (!/^[A-Za-z0-9_.-]+$/.test(runId)) throw new Error('Invalid doctor run id');
 }
 
-function renderMarkdown(run: DoctorRun): string {
+function renderMarkdown(run: DoctorPersistedRun): string {
   const counts = {
     total: run.issues.length,
     p0: run.issues.filter((issue) => issue.severity === 'P0').length,
     p1: run.issues.filter((issue) => issue.severity === 'P1').length,
     p2: run.issues.filter((issue) => issue.severity === 'P2').length,
-    confirmed: run.issues.filter((issue) => issue.confidence === 'confirmed').length,
-    inferred: run.issues.filter((issue) => issue.confidence === 'inferred').length,
-    unconfirmed: run.issues.filter((issue) => issue.confidence === 'unconfirmed').length,
   };
-  const history = Array.isArray(run.build.history) ? run.build.history : [];
   const lines = [
-    `# EngineLink Project Doctor ${run.id}`,
+    `# EngineLink Project Doctor`,
     '',
     `- Status: ${run.status}`,
-    `- Mode: ${run.mode}`,
     `- Project: ${run.project}`,
     `- Started: ${run.startedAt}`,
     `- Finished: ${run.finishedAt ?? 'running'}`,
     `- Conclusion: ${run.conclusion ?? 'Pending'}`,
-    `- Checks complete: ${run.summary?.checksComplete ?? false}`,
     `- Findings: ${counts.total} (P0 ${counts.p0}, P1 ${counts.p1}, P2 ${counts.p2})`,
-    `- Confidence: confirmed ${counts.confirmed}, inferred ${counts.inferred}, unconfirmed ${counts.unconfirmed}`,
-    `- Blocking issues: ${run.summary?.hasBlockingIssues ?? false}`,
     '',
-    '## EngineLink runtime',
-    '',
-    `- Identity: ${JSON.stringify(run.engineLink ?? null)}`,
+    'Read Coverage before Issues. incomplete means a requested check did not run; an empty issue list is not a project pass.',
     '',
     '## Coverage',
     '',
     ...Object.entries(run.coverage).map(([name, coverage]) => `- ${name}: ${coverage.status}${coverage.detail ? ` — ${coverage.detail}` : ''}`),
-    '',
-    '## Build evidence',
-    '',
-    `- Authoritative: ${JSON.stringify(run.build.authoritative ?? null)}`,
-    '',
-    `<details><summary>History (${history.length} candidates)</summary>`,
-    '',
-    '```json',
-    JSON.stringify(history, null, 2),
-    '```',
-    '',
-    '</details>',
-    '',
-    '## Scenarios',
-    '',
-    ...(run.scenarios.length ? run.scenarios.map((scenario) => `- ${scenario.name}: ${scenario.status}${scenario.error ? ` — ${scenario.error}` : ''}`) : ['No scenarios requested.']),
     '',
     '## Issues',
     '',
@@ -117,13 +113,10 @@ function renderMarkdown(run: DoctorRun): string {
   if (run.issues.length === 0) lines.push('No issues recorded. This does not prove unexecuted checks are correct.', '');
   for (const issue of run.issues) {
     lines.push(
-      `### ${issue.severity} ${issue.id}`,
+      `### ${issue.severity} ${issue.ruleId}`,
       '',
       `- Path: ${issue.path}`,
-      `- Confidence: ${issue.confidence}`,
       `- Evidence: ${issue.evidence}`,
-      `- Impact: ${issue.impact}`,
-      `- Verify: ${issue.verification}`,
       `- Recommendation: ${issue.recommendation}`,
       '',
     );

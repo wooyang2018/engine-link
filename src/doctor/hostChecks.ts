@@ -23,48 +23,31 @@ export async function applyHostChecks(
   const ubtExists = await exists(ctx.engine.ubtPath);
   const editorBinaryExists = await exists(ctx.engine.editorPath);
 
-  run.host = {
-    buildTools: buildTools ?? null,
-    clang,
-    ubt: { path: ctx.engine.ubtPath, exists: ubtExists },
-    editorBinary: { path: ctx.engine.editorPath, exists: editorBinaryExists },
-  };
-
   if (!buildTools) {
     addHostIssue(run, 'host.build_tools', 'P1', ctx.project.uprojectPath,
       'Visual Studio C++ Build Tools were not detected.',
-      'EngineLink cold builds and UBT invocations are likely to fail on this machine.',
-      'Install Visual Studio with the Desktop development with C++ workload, then rerun preflight.',
-      'Install MSVC build tools before relying on host-side compile or acceptance workflows.');
+      'Install MSVC build tools before relying on host-side compile workflows.');
   } else if (!buildTools.hasWindowsSDK) {
     addHostIssue(run, 'host.windows_sdk', 'P1', ctx.project.uprojectPath,
       'Visual Studio was found, but the expected Windows SDK component was not detected.',
-      'UnrealBuildTool may fail when targeting Win64.',
-      'Add a Windows 10/11 SDK through Visual Studio Installer, then rerun preflight.',
       'Install a supported Windows SDK for UE Win64 builds.');
   }
 
   if (!clang) {
     addHostIssue(run, 'host.clang', 'P2', ctx.project.uprojectPath,
       'clang-cl was not found; compile_commands.json can be generated but IntelliSense may be incomplete.',
-      'IDE navigation and clangd diagnostics may be degraded even when UBT builds succeed.',
-      'Install LLVM/clang-cl or enable the VS LLVM component, then regenerate compile_commands.',
       'Provide clang-cl on PATH when compile_commands-based navigation is required.');
   }
 
   if (!ubtExists) {
     addHostIssue(run, 'host.ubt_missing', 'P1', ctx.engine.ubtPath,
       `UnrealBuildTool was not found at the resolved engine path.`,
-      'Cold builds cannot run until the engine installation is corrected.',
-      'Verify EngineAssociation and engine discovery, then rerun preflight.',
       'Point the project at a complete UE installation that includes UBT.');
   }
 
   if (!editorBinaryExists) {
     addHostIssue(run, 'host.editor_binary_missing', 'P1', ctx.engine.editorPath,
       `Unreal Editor was not found at the resolved engine path.`,
-      'EngineLink cannot launch or validate the Editor binary for this engine root.',
-      'Verify EngineAssociation and engine discovery, then rerun preflight.',
       'Point the project at a complete UE installation that includes UnrealEditor.');
   }
 
@@ -97,26 +80,11 @@ function addHostIssue(
   severity: 'P0' | 'P1' | 'P2',
   targetPath: string,
   evidence: string,
-  impact: string,
-  verification: string,
   recommendation: string,
 ): void {
   const id = `UEPD-${ruleId.toUpperCase().replace(/[^A-Z0-9]+/g, '-')}-${hashTarget(ruleId, targetPath)}`;
   if (run.issues.some((issue) => issue.id === id)) return;
-  run.issues.push({
-    id,
-    ruleId,
-    severity,
-    path: targetPath,
-    evidence,
-    impact,
-    verification,
-    recommendation,
-    confidence: 'confirmed',
-    discoveredAt: new Date().toISOString(),
-    sessionId: run.id,
-    source: 'EngineLink host',
-  });
+  run.issues.push({ id, ruleId, severity, path: targetPath, evidence, recommendation });
 }
 
 function hashTarget(ruleId: string, target: string): string {
