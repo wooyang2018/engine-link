@@ -66,23 +66,6 @@ describe('pickTargetForType', () => {
     expect(pickTargetForType(project, 'Game')).toBe('LyraStarterGame');
   });
 
-  it('prefers build.editorTargetName over discovered Editor targets', () => {
-    const project = makeLyraProject([
-      {
-        name: 'LyraEditor',
-        type: 'Editor',
-        targetFile: 'D:/Workspace/extraction-ops/Source/LyraEditor.Target.cs',
-      },
-      {
-        name: 'LyraToolsEditor',
-        type: 'Editor',
-        targetFile: 'D:/Workspace/extraction-ops/Source/LyraToolsEditor.Target.cs',
-      },
-    ]);
-
-    expect(pickTargetForType(project, 'Editor', { editorTargetName: 'LyraToolsEditor' })).toBe('LyraToolsEditor');
-  });
-
   it('throws when multiple Editor targets are ambiguous', () => {
     const project = makeLyraProject([
       {
@@ -98,7 +81,7 @@ describe('pickTargetForType', () => {
     ]);
 
     expect(() => pickTargetForType(project, 'Editor')).toThrow(/Ambiguous Editor targets/);
-    expect(() => pickTargetForType(project, 'Editor')).toThrow(/build.editorTargetName/);
+    expect(() => pickTargetForType(project, 'Editor')).toThrow(/Source\/\*Editor\.Target\.cs/);
   });
 
   it('keeps a conventional Editor name when several Editor targets exist', () => {

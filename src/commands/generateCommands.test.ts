@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 const { executeCommand } = vi.hoisted(() => ({ executeCommand: vi.fn() }));
 
@@ -6,7 +6,7 @@ vi.mock('vscode', () => ({
   commands: { executeCommand },
 }));
 
-import { restartClangdIfAvailable } from './generateCommands';
+import { clangdSyncFromRunDetails, restartClangdIfAvailable } from './generateCommands';
 
 function makeContext() {
   return {
@@ -15,6 +15,18 @@ function makeContext() {
     outputChannel: { appendLine: vi.fn() },
   } as never;
 }
+
+describe('clangdSyncFromRunDetails', () => {
+  it('reads templateFlags captured before forced-include injection', () => {
+    expect(clangdSyncFromRunDetails({
+      templateFlags: ['clang-cl.exe', '/I', 'Source'],
+      projectForcedIncludes: { sharedPch: 'PCH.h', definitions: 'Def.h' },
+    })).toEqual({
+      templateFlags: ['clang-cl.exe', '/I', 'Source'],
+      projectForcedIncludes: { sharedPch: 'PCH.h', definitions: 'Def.h' },
+    });
+  });
+});
 
 describe('restartClangdIfAvailable', () => {
   it('invokes clangd.restart so the server reloads compile_commands.json', async () => {

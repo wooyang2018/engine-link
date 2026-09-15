@@ -1,97 +1,16 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { generateClangDatabaseCommandLine, formatCommandLine } from '../build/ubt';
-import { spawnAsync } from '../platform/process';
 import { fileExists } from '../platform/paths';
 import {
   isCompileCommandsStale,
   loadCompileCommands,
   postProcessCompileCommandsFile,
   type PostProcessResult,
+  type ProjectForcedIncludes,
 } from '../cursor/compileCommandsPostProcess';
-import { placeCompileCommands } from '../cursor/placeCompileCommands';
 import type { EngineLinkContext } from '../types';
 import type { EngineLinkSettings } from '../config/settings';
-
-/**
- * Generate compile_commands.json via UBT and place it at the project root.
- */
-export async function generateCompileCommands(
-  ctx: EngineLinkContext,
-  settings: EngineLinkSettings,
-) {
-  if (!ctx.project || !ctx.engine) {
-    vscode.window.showErrorMessage('EngineLink: No project or engine detected.');
-    return;
-  }
-
-  const project = ctx.project;
-  const engine = ctx.engine;
-  const cmd = generateClangDatabaseCommandLine(engine, project, {
-    configuration: settings.buildConfiguration,
-    platform: settings.platform,
-    editorTargetName: ctx.editorTargetName,
-  });
-
-  await vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: 'EngineLink: Generating compile_commands.json...',
-      cancellable: true,
-    },
-    async (_progress, token) => {
-      ctx.outputChannel.show(true);
-      ctx.outputChannel.appendLine(`[EngineLink] ${formatCommandLine(cmd)}`);
-
-      const ubtOutput: string[] = [];
-      const capture = (line: string) => {
-        ubtOutput.push(line);
-        ctx.outputChannel.appendLine(line);
-      };
-
-      const result = await spawnAsync(cmd.executable, cmd.args, {
-        onStdout: capture,
-        onStderr: capture,
-        token,
-      });
-
-      if (result.exitCode !== 0) {
-        vscode.window
-          .showErrorMessage('EngineLink: Failed to generate compile_commands.json.', 'Show Output')
-          .then((choice) => {
-            if (choice === 'Show Output') ctx.outputChannel.show();
-          });
-        return;
-      }
-
-      const placed = await placeCompileCommands({
-        projectRoot: project.projectRoot,
-        engineRoot: engine.root,
-        ubtOutput: ubtOutput.join('\n'),
-        onLog: (line) => ctx.outputChannel.appendLine(line),
-      });
-
-      if (!placed.ok) {
-        vscode.window.showWarningMessage(
-          'EngineLink: compile_commands.json generated but could not be located. Check UBT output.',
-        );
-        return;
-      }
-
-      const postProcess = await runCompileCommandsPostProcess(ctx);
-      await restartClangdIfAvailable(ctx);
-      if (postProcess.stats.broken > 0) {
-        vscode.window.showWarningMessage(
-          `EngineLink: compile_commands.json post-processed with ${postProcess.stats.broken} broken entr${postProcess.stats.broken === 1 ? 'y' : 'ies'}.`,
-        );
-      } else {
-        vscode.window.showInformationMessage(
-          'EngineLink: compile_commands.json generated successfully.',
-        );
-      }
-    },
-  );
-}
+import { EngineLinkService } from '../core/service';
 
 /**
  * Ask the vscode-clangd extension to restart so it picks up a rewritten
@@ -107,8 +26,59 @@ export async function restartClangdIfAvailable(ctx: EngineLinkContext): Promise<
   }
 }
 
+export interface ClangdCompileDbSync {
+  templateFlags?: string[];
+  projectForcedIncludes?: ProjectForcedIncludes;
+}
+
 /**
- * Post-process compile_commands.json in place and log stats.
+ * Update `.clangd` from an already-generated compile database, then restart clangd.
+ * Does not spawn UBT. Prefer `templateFlags` captured before forced-include injection.
+ */
+export async function syncClangdFromCompileDb(
+  ctx: EngineLinkContext,
+  options: ClangdCompileDbSync = {},
+): Promise<void> {
+  if (!ctx.project || !ctx.engine) return;
+  const engineRoot = ctx.engine.root;
+  const templateFlags = options.templateFlags ?? [];
+  if (templateFlags.length === 0) {
+    ctx.outputChannel.appendLine('[EngineLink] Skipping .clangd engine fallback; no template flags.');
+    await restartClangdIfAvailable(ctx);
+    return;
+  }
+
+  const { ensureClangdConfig, ensureIdeOverridesHeader } = await import('../cursor/clangdConfig');
+  const ideOverridesHeader = ctx.globalStoragePath
+    ? await ensureIdeOverridesHeader(ctx.globalStoragePath)
+    : undefined;
+  const changed = await ensureClangdConfig(ctx.project.projectRoot, {
+    engineRoot,
+    templateFlags,
+    projectRoot: ctx.project.projectRoot,
+    projectForcedIncludes: options.projectForcedIncludes,
+    ideOverridesHeader,
+  });
+  if (changed) {
+    ctx.outputChannel.appendLine('[EngineLink] .clangd updated with engine-source IntelliSense fallback.');
+  }
+  await restartClangdIfAvailable(ctx);
+}
+
+function clangdSyncFromDetails(details?: Record<string, unknown>): ClangdCompileDbSync {
+  const templateFlags = details?.templateFlags;
+  const projectForcedIncludes = details?.projectForcedIncludes;
+  return {
+    templateFlags: Array.isArray(templateFlags) ? templateFlags.filter((flag): flag is string => typeof flag === 'string') : undefined,
+    projectForcedIncludes:
+      projectForcedIncludes && typeof projectForcedIncludes === 'object'
+        ? projectForcedIncludes as ProjectForcedIncludes
+        : undefined,
+  };
+}
+
+/**
+ * Post-process compile_commands.json in place, update `.clangd`, and log stats.
  */
 export async function runCompileCommandsPostProcess(
   ctx: EngineLinkContext,
@@ -123,25 +93,30 @@ export async function runCompileCommandsPostProcess(
   ctx.outputChannel.appendLine(
     `[EngineLink] compile_commands post-process: total=${result.stats.total}, flattened=${result.stats.flattened}, remapped=${result.stats.remapped}, headerAliases=${result.stats.headerAliases}, engineHeaderEntries=${result.stats.engineHeaderEntries}, broken=${result.stats.broken}`,
   );
-
-  if (engineRoot && result.templateFlags.length > 0) {
-    const { ensureClangdConfig, ensureIdeOverridesHeader } = await import('../cursor/clangdConfig');
-    const ideOverridesHeader = ctx.globalStoragePath
-      ? await ensureIdeOverridesHeader(ctx.globalStoragePath)
-      : undefined;
-    const changed = await ensureClangdConfig(projectRoot, {
-      engineRoot,
-      templateFlags: result.templateFlags,
-      projectRoot,
-      projectForcedIncludes: result.projectForcedIncludes,
-      ideOverridesHeader,
-    });
-    if (changed) {
-      ctx.outputChannel.appendLine('[EngineLink] .clangd updated with engine-source IntelliSense fallback.');
-    }
-  }
-
   return result;
+}
+
+async function generateCompileCommandsViaService(
+  ctx: EngineLinkContext,
+  settings: EngineLinkSettings,
+): Promise<boolean> {
+  if (!ctx.project) return false;
+  const record = await new EngineLinkService(ctx.project.projectRoot).generateCompileCommands({
+    configuration: settings.buildConfiguration,
+    platform: settings.platform,
+    reason: 'Cursor auto-generate compile_commands',
+  });
+  ctx.outputChannel.appendLine(
+    `[EngineLink] Generate compile_commands.json ${record.success ? 'succeeded' : 'failed'} in ${(record.durationMs / 1000).toFixed(1)}s.`,
+  );
+  if (!record.success) {
+    vscode.window.showErrorMessage(
+      `EngineLink: Failed to generate compile_commands.json${record.details?.message ? `: ${String(record.details.message)}` : '.'}`,
+    );
+    return false;
+  }
+  await syncClangdFromCompileDb(ctx, clangdSyncFromDetails(record.details));
+  return true;
 }
 
 /**
@@ -161,7 +136,7 @@ export async function ensureCompileCommandsIntellisense(
   if (!(await fileExists(compileDbPath))) {
     if (options.allowRegenerate && settings.autoGenerateCompileCommands) {
       ctx.outputChannel.appendLine('[EngineLink] Auto-generating compile_commands.json...');
-      await generateCompileCommands(ctx, settings);
+      await generateCompileCommandsViaService(ctx, settings);
     }
     return;
   }
@@ -184,13 +159,16 @@ export async function ensureCompileCommandsIntellisense(
     );
   }
   const postProcess = await runCompileCommandsPostProcess(ctx);
-  await restartClangdIfAvailable(ctx);
+  await syncClangdFromCompileDb(ctx, {
+    templateFlags: postProcess.templateFlags,
+    projectForcedIncludes: postProcess.projectForcedIncludes,
+  });
 
   if (postProcess.stats.broken > 0 && options.allowRegenerate && settings.autoGenerateCompileCommands) {
     ctx.outputChannel.appendLine(
       '[EngineLink] compile_commands.json still has broken entries after post-process; regenerating...',
     );
-    await generateCompileCommands(ctx, settings);
+    await generateCompileCommandsViaService(ctx, settings);
     return;
   }
 
@@ -214,3 +192,6 @@ async function needsEngineHeaderPostProcess(projectRoot: string, engineRoot: str
   }
 }
 
+export function clangdSyncFromRunDetails(details?: Record<string, unknown>): ClangdCompileDbSync {
+  return clangdSyncFromDetails(details);
+}

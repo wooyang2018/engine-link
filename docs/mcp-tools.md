@@ -16,9 +16,9 @@ EngineLink **不代理** Unreal 的 `call_tool` / Live Coding / PIE。玩法测�
 | `enginelink_build` | `build` | `enginelink.run.v1` |
 | `enginelink_clean` | `clean --confirm` | `enginelink.run.v1` |
 | `enginelink_generate_compile_commands` | `compile-commands` | `enginelink.run.v1` |
-| `enginelink_launch_editor` | `launch` | 启动结果对象（另落一条 `kind: launch` 的 run） |
+| `enginelink_launch_editor` | `launch` | 启动结果对象 |
 
-公共可选（**不含** `project_doctor`）：MCP `taskId` / `reason`；CLI `--task-id` / `--reason`。`build` / `clean` 另有 `configuration` / `targetType` / `platform`（CLI `--configuration` / `--target` / `--platform`）。`compile-commands` 只有 `configuration` / `platform`，目标固定为 Editor。缺省来自 `.enginelink/project.json` 的 `build.*`，再缺省为 Development / Editor / Win64。
+公共可选（**不含** `project_doctor`）：MCP `taskId` / `reason`；CLI `--task-id` / `--reason`。`build` / `clean` 另有 `configuration` / `targetType` / `platform`（CLI `--configuration` / `--target` / `--platform`）。`compile-commands` 只有 `configuration` / `platform`，目标固定为 Editor。缺省为 Development / Editor / Win64。
 
 MCP `isError: true` **只**在：抛错，或返回体是 `enginelink.run.v1` 且 `success === false`。Doctor 的 `failed` / `incomplete` **不是** `isError`。CLI 对 `run.v1` 失败和 Doctor 非 `passed`/`passed_with_findings` 设退出码 1。
 
@@ -26,13 +26,13 @@ MCP `isError: true` **只**在：抛错，或返回体是 `enginelink.run.v1` �
 
 ## 共享返回：`enginelink.run.v1`
 
-`build` / `clean` / `generate_compile_commands` 成功或失败都返回这个形状；`launch_editor` 另落一条 `kind: launch` 的记录，但 MCP/CLI 返回的是启动结果对象，不是这份 view。
+`build` / `clean` / `generate_compile_commands` 成功或失败都返回这个形状；`launch_editor` 的 MCP/CLI 返回的是启动结果对象，不是这份 view。
 
 | 字段 | 含义 |
 |------|------|
 | `schema` | 恒为 `enginelink.run.v1` |
 | `id` / `kind` | 运行 id；`kind` 为 `build` / `clean` / `compile-commands` / `launch` |
-| `taskId` / `reason` | 调用方传入，写入审计 |
+| `taskId` / `reason` | 调用方传入 |
 | `startedAt` / `finishedAt` / `durationMs` | ISO 时间与耗时 |
 | `success` / `exitCode` | 进程结果。blocked 操作为 `false` / `1` |
 | `command` | `{ executable, args }`；args 已对 token/secret 类脱敏 |
@@ -40,7 +40,7 @@ MCP `isError: true` **只**在：抛错，或返回体是 `enginelink.run.v1` �
 | `details` | 拒绝原因、后处理统计等 |
 | `project` / `engine` | uproject 与引擎根 |
 
-落盘：`Saved/EngineLink/Runs/<id>/summary.json`（+ 可选 `output.log`）以及 `Saved/EngineLink/latest-<kind>.json`。
+落盘：仅 `kind: build` 覆盖 `Saved/EngineLink/latest-build.json`（Doctor 权威冷构建指针）。其它 kind 只出现在工具返回体。
 
 ---
 
@@ -61,8 +61,7 @@ MCP `isError: true` **只**在：抛错，或返回体是 `enginelink.run.v1` �
 | `engine` | 版本、根目录、UBT/Editor 二进制、来源 |
 | `editor` | `{ running, process, processes }`；`processes` 按启动时间降序，`process` 为最新一条 |
 | `buildTools` | vswhere 结果；未检测到为 `null` |
-| `defaults` | 本次将用于 build/compile-commands 的 configuration / targetType / platform，以及 `editorTargetName`（配置）与解析后的 `editorTarget` |
-| `configPath` | `.enginelink/project.json` 路径 |
+| `defaults` | 本次将用于 build/compile-commands 的 configuration / targetType / platform，以及解析后的 `editorTarget` |
 | `responsibilities` | 两句话划清 EngineLink vs Unreal MCP |
 
 **边界：** 构造 Service 时若找不到项目/引擎即抛错。Editor 枚举仅 Windows；其它平台 `running: false`、`processes: []`。
@@ -98,7 +97,7 @@ MCP `isError: true` **只**在：抛错，或返回体是 `enginelink.run.v1` �
 
 **设计：** **冷构建**。同一项目已有 `UnrealEditor.exe`（Win32 命令行含 uproject 绝对路径）则拒绝，写 `success: false`、`details.blocked`，并提示用 Unreal MCP Live Coding。非 Windows 不做该检测。
 
-**输入：** `configuration` / `targetType` / `platform`、`taskId`、`reason`。UBT 目标名由 `pickTargetForType` 解析：约定名 / 主模块 / 唯一发现项；Editor 可被 `project.json` 的 `build.editorTargetName` 覆盖。多义且无覆盖时抛错。
+**输入：** `configuration` / `targetType` / `platform`、`taskId`、`reason`。UBT 目标名由 `pickTargetForType` 解析：约定名 / 主模块 / 唯一发现项。多义时抛错。
 
 **输出** `enginelink.run.v1`：
 
@@ -111,7 +110,7 @@ MCP `isError: true` **只**在：抛错，或返回体是 `enginelink.run.v1` �
 | `details` | 拒绝时 `{ blocked: true, message, editorPid }` |
 | `project` / `engine` | 路径 |
 
-落盘：`Saved/EngineLink/Runs/<id>/` 与 `latest-build.json`。失败时 MCP `isError: true`。
+落盘：覆盖 `Saved/EngineLink/latest-build.json`。失败时 MCP `isError: true`。
 
 **边界：** 不刷新 `compile_commands.json`。不替代 Live Coding。
 
@@ -133,30 +132,30 @@ MCP `isError: true` **只**在：抛错，或返回体是 `enginelink.run.v1` �
 
 **原理：** UBT `-mode=GenerateClangDatabase -NoExecCodeGenActions -OutputDir=<projectRoot>`。成功后按 UBT 日志路径 → 引擎根 → Intermediate/Build 把 `compile_commands.json` **安置到项目根**，再后处理（内联 `@*.rsp`、Unity remap、补头文件）。
 
-**设计：** 给 clangd 用，不是给游戏运行时用。固定 Editor 目标（可用 `build.editorTargetName` 覆盖）。MCP/CLI **不**改 `.clangd`、**不** `clangd.restart`（那是 Cursor 扩展激活路径）。
+**设计：** 给 clangd 用，不是给游戏运行时用。固定 Editor 目标。MCP/CLI **不**改 `.clangd`、**不** `clangd.restart`（Cursor 扩展激活与菜单 Generate 在同一条 Service 之后补 IDE sidecar）。
 
 **输入：** `configuration` / `platform` / `taskId` / `reason`。**没有** `targetType`。
 
-**输出：** `enginelink.run.v1`，`kind: compile-commands`。成功时 `details` 含 `compileCommandsPath`、`placedFrom`（`UBT output` / `engine root` / `Intermediate/Build search`）、`postProcess` 统计。UBT 成功但安置失败 → `success: false`（MCP `isError`），不把旧的项目根文件当成这次生成结果。
+**输出：** `enginelink.run.v1`，`kind: compile-commands`。成功时 `details` 含 `compileCommandsPath`、`placedFrom`（`UBT output` / `engine root` / `Intermediate/Build search`）、`postProcess` 统计，以及扩展用来更新 `.clangd` 的 `templateFlags` / `projectForcedIncludes`。UBT 成功但安置失败 → `success: false`（MCP `isError`），不把旧的项目根文件当成这次生成结果。
 
-**边界：** 扩展激活路径仍会在后处理之后更新 `.clangd` 并尝试 `clangd.restart`。Tasks 面板的 generate 任务调用 `node dist/cli.js compile-commands`，与 MCP/CLI 同一条链。详情见 [review-analysis.md](./review-analysis.md) §4。
+**边界：** 扩展激活路径仍会在后处理之后更新 `.clangd` 并尝试 `clangd.restart`。Tasks 面板的 generate 任务调用 `node dist/cli.js compile-commands`，与 MCP/CLI 同一条链。
 
 ---
 
 ## 6. `enginelink_launch_editor` / `launch`
 
-**原理：** 若已有同项目 Editor 进程，直接返回，不再 spawn。否则 `UnrealEditor.exe <uproject> [map] [config.args]`，detached。
+**原理：** 若已有同项目 Editor 进程，直接返回，不再 spawn。否则 `UnrealEditor.exe <uproject>`，detached。
 
 **设计：** 只负责进程出现，不等 MCP 就绪、不等地图加载。Doctor 需要 Editor+MCP 时，应先 launch（或用户打开），再单独调 `project_doctor`。
 
-**输入：** `taskId` / `reason`。地图与附加参数来自 `project.json` 的 `editor.map` / `editor.args`。
+**输入：** `taskId` / `reason`。
 
 **输出：**
 
 | 情况 | 形状 |
 |------|------|
 | 已存在 | `{ launched: false, existing: true, process }` |
-| 新启动 | `{ launched: true, existing: false, pid, runId }`，并落盘 `kind: launch` 的 run |
+| 新启动 | `{ launched: true, existing: false, pid, runId }` |
 
 **边界：** 不健康检查。多开时只要已有任一匹配进程就不会再开。非 Windows 上「已存在」检测为空，可能重复启动。
 

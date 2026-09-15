@@ -148,7 +148,7 @@ public class MyProjectTarget : TargetRules
 - `Public/` 头文件被其它模块 include；实现细节放 `Private/`。
 - `.uplugin` 描述插件；模块仍在 `Source/` 下，各有自己的 `.Build.cs`。
 - `TargetType`：`Game` / `Editor` / `Client` / `Server` 是不同链接产物。Editor 目标才会链编辑器模块。
-- EngineLink 冷构建按约定名 / 主模块 / 唯一发现项解析 `*Editor` 目标；第二个 Editor target 写 `build.editorTargetName`（见 [review-analysis.md](./review-analysis.md) §5）。
+- EngineLink 冷构建按约定名 / 主模块 / 唯一发现项解析 `*Editor` 目标；多个 Editor target 无法消歧时抛错。
 
 ---
 

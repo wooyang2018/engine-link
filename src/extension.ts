@@ -19,8 +19,6 @@ import { ensureVscodeSettings } from './cursor/vscodeSettings';
 import { registerProjectMcpServers } from './mcp/clientRegistration';
 import { EngineLinkTaskProvider } from './build/taskProvider';
 import type { EngineLinkContext } from './types';
-import { loadProjectConfig } from './core/config';
-
 let context: EngineLinkContext;
 let statusBar: StatusBarManager;
 let settings: EngineLinkSettings;
@@ -127,18 +125,10 @@ async function runDetectionPipeline(options?: { allowAutoCompileDb?: boolean }) 
   }
 
   outputChannel.appendLine(`[EngineLink] Project: ${context.project.name} (${context.project.engineAssociation})`);
-  try {
-    const projectConfig = await loadProjectConfig(context.project.projectRoot);
-    context.editorTargetName = projectConfig.build?.editorTargetName?.trim() || undefined;
-  } catch {
-    context.editorTargetName = undefined;
-  }
   if (context.project.targets.length > 0) {
     try {
       const { pickTargetForType } = await import('./parsers/targetParser');
-      const editorTarget = pickTargetForType(context.project, 'Editor', {
-        editorTargetName: context.editorTargetName,
-      });
+      const editorTarget = pickTargetForType(context.project, 'Editor');
       outputChannel.appendLine(
         `[EngineLink] UBT targets discovered: ${context.project.targets.length} (.Target.cs); Editor target: ${editorTarget}`,
       );

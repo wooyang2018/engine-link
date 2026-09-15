@@ -6,19 +6,18 @@ import { resolveEditorPath, resolveUBTPath } from '../platform/paths';
 import { readRegistryKeyValues, readRegistryValue } from '../platform/registry';
 import { Registry } from '../constants';
 import type { UEInstallation, UEProject } from '../types';
-import { exists, findProjectRoot, loadProjectConfig, type EngineLinkProjectConfig } from './config';
+import { exists, findProjectRoot, findUniqueUProject } from './config';
 
 export interface StandaloneContext {
   projectRoot: string;
-  config: EngineLinkProjectConfig;
   project: UEProject;
   engine: UEInstallation;
 }
 
 export async function resolveStandaloneContext(startPath: string): Promise<StandaloneContext> {
   const projectRoot = await findProjectRoot(startPath);
-  const config = await loadProjectConfig(projectRoot);
-  const uprojectPath = path.resolve(projectRoot, config.uproject);
+  const uproject = await findUniqueUProject(projectRoot);
+  const uprojectPath = path.resolve(projectRoot, uproject);
   if (!(await exists(uprojectPath))) throw new Error(`Missing project file: ${uprojectPath}`);
   const data = await parseUProject(uprojectPath);
   const project: UEProject = {
@@ -29,15 +28,15 @@ export async function resolveStandaloneContext(startPath: string): Promise<Stand
     modules: data.modules,
     targets: await discoverProjectTargets(projectRoot),
   };
-  const engine = await resolveEngine(config.engineRoot, data.engineAssociation);
-  return { projectRoot, config, project, engine };
+  const engine = await resolveEngine(data.engineAssociation);
+  return { projectRoot, project, engine };
 }
 
-async function resolveEngine(configuredRoot: string | undefined, association: string): Promise<UEInstallation> {
+async function resolveEngine(association: string): Promise<UEInstallation> {
   const registryRoot = await resolveAssociationFromRegistry(association);
+  const envRoot = process.env.ENGINELINK_ENGINE_ROOT;
   const candidates = [
-    configuredRoot,
-    process.env.ENGINELINK_ENGINE_ROOT,
+    envRoot,
     registryRoot,
     association ? `D:\\Software\\UE_${association}` : undefined,
     association ? `C:\\Program Files\\Epic Games\\UE_${association}` : undefined,
@@ -51,7 +50,7 @@ async function resolveEngine(configuredRoot: string | undefined, association: st
       return {
         version: association || path.basename(normalized).replace(/^UE_/, ''),
         root: normalized,
-        source: configuredRoot === root ? 'manual' : 'uproject-association',
+        source: envRoot && path.resolve(envRoot) === normalized ? 'manual' : 'uproject-association',
         ubtPath,
         editorPath: resolveEditorPath(normalized),
         isSourceBuild: await exists(path.join(normalized, 'Engine', 'Source', 'Programs', 'UnrealBuildTool')),
@@ -59,7 +58,9 @@ async function resolveEngine(configuredRoot: string | undefined, association: st
     }
   }
 
-  throw new Error(`Unable to resolve UE ${association || '(unassociated)'}. Set engineRoot in .enginelink/project.json or ENGINELINK_ENGINE_ROOT.`);
+  throw new Error(
+    `Unable to resolve UE ${association || '(unassociated)'}. Set ENGINELINK_ENGINE_ROOT or enginelink.engineRoot.`,
+  );
 }
 
 async function resolveAssociationFromRegistry(association: string): Promise<string | undefined> {

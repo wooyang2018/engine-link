@@ -31,11 +31,29 @@ export async function executeCoreClean(ctx: EngineLinkContext, settings: EngineL
 }
 
 export async function executeCoreCompileCommands(ctx: EngineLinkContext, settings: EngineLinkSettings): Promise<void> {
-  await runWithProgress(ctx, 'Generate compile_commands.json', async (service) => service.generateCompileCommands({
-    configuration: settings.buildConfiguration,
-    platform: settings.platform,
-    reason: 'Cursor Generate compile_commands command',
-  }));
+  if (!ctx.project) return showError('No Unreal project is selected.');
+  try {
+    const record = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'EngineLink: Generate compile_commands.json', cancellable: false },
+      () => new EngineLinkService(ctx.project!.projectRoot).generateCompileCommands({
+        configuration: settings.buildConfiguration,
+        platform: settings.platform,
+        reason: 'Cursor Generate compile_commands command',
+      }),
+    );
+    applyRun(ctx, record);
+    const message = `Generate compile_commands.json ${record.success ? 'succeeded' : 'failed'} in ${(record.durationMs / 1000).toFixed(1)}s. Run: ${record.id}`;
+    ctx.outputChannel.appendLine(`[EngineLink] ${message}`);
+    if (!record.success) {
+      showError(message);
+      return;
+    }
+    const { clangdSyncFromRunDetails, syncClangdFromCompileDb } = await import('./generateCommands');
+    await syncClangdFromCompileDb(ctx, clangdSyncFromRunDetails(record.details));
+    vscode.window.showInformationMessage(`EngineLink: ${message}`);
+  } catch (error) {
+    showError(error instanceof Error ? error.message : String(error));
+  }
 }
 
 export async function executeCoreLaunch(ctx: EngineLinkContext): Promise<void> {

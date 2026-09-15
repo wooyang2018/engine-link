@@ -198,9 +198,8 @@ UnrealEditor-Cmd.exe "<Project>.uproject" -ExecCmds="Automation RunTests <Filter
 
 | 能力 | 谁负责 |
 | --- | --- |
-| 冷构建、compile commands、Editor 进程 | EngineLink MCP / CLI（见 [architecture.md](./architecture.md)） |
+| 冷构建、compile commands、Editor 进程 | EngineLink MCP / CLI |
 | CQTest / Automation 用例编写与执行 | **业务项目**（Session Frontend、`UnrealEditor-Cmd`、项目 `Scripts/*.ps1`） |
-| 项目自定义验收门闩 | `.enginelink/project.json` 的 `acceptance` 字段 → `enginelink_run_acceptance`（若配置） |
 
 EngineLink **不**代理 Unreal Editor 内 Automation 运行，也不替代 CQTest。典型分工：EngineLink 保证 Editor 目标编译成功；项目在关 Editor 后跑 `Automation RunTests`。
 

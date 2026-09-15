@@ -111,11 +111,11 @@ UBT's normal Editor build often compiles many `.cpp` files through auto-generate
 **EngineLink handles this automatically:**
 
 1. UBT generation uses `-NoExecCodeGenActions` and `-OutputDir=<project root>` for faster, correctly placed output.
-2. After generation (and after successful builds when `enginelink.autoGenerateCompileCommands` is enabled), EngineLink **post-processes** `compile_commands.json`:
+2. After **Generate compile_commands.json** (activation auto-generate, the command, MCP/CLI, or the compile-commands Task), EngineLink **post-processes** `compile_commands.json`:
    - Inlines `@*.rsp` into clangd-friendly `arguments` arrays
    - Remaps broken per-file entries via `Module.*.cpp` when merged builds are in use
    - Adds matching `.h` entries so opening headers gets a compilation unit (UE `Private/Foo.cpp` → `Public/Foo.h`; project `.h` entries are always re-derived from `.cpp`, not kept from input)
-3. On activation, if the database looks stale (many missing `.rsp` files), EngineLink post-processes it and regenerates when entries are still broken.
+3. On activation, if the database is missing, EngineLink can generate it when `enginelink.autoGenerateCompileCommands` is enabled. If it looks stale (many missing `.rsp` files), EngineLink post-processes it and regenerates via the same Service path when entries are still broken. Cold **build** does not refresh the compile database.
 
 EngineLink also upserts `.vscode/settings.json` in the UE project folder so `clangd` and C/C++ use `${workspaceFolder}/compile_commands.json` in multi-root workspaces.
 
@@ -301,10 +301,10 @@ src/
 │   ├── ubt.ts                    # UBT command-line construction
 │   └── taskProvider.ts           # Cursor task provider
 ├── core/
-│   ├── config.ts                 # .enginelink/project.json discovery
+│   ├── config.ts                 # .uproject discovery
 │   ├── discovery.ts              # IDE-independent project/engine resolution
 │   ├── service.ts                # Shared host-side operations
-│   ├── runStore.ts               # Saved/EngineLink/Runs records
+│   ├── runStore.ts               # Saved/EngineLink/latest-build.json
 ├── commands/
 │   ├── coreCommands.ts           # Cursor adapter over shared core
 │   ├── launchCommands.ts         # Legacy Editor launch helper

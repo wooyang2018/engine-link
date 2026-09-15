@@ -1,5 +1,5 @@
 import type { UEInstallation, UEProject, BuildConfiguration, BuildTargetType, BuildPlatform } from '../types';
-import { pickTargetForType, type TargetPickOverrides } from '../parsers/targetParser';
+import { pickTargetForType } from '../parsers/targetParser';
 
 export interface UBTCommandLine {
   executable: string;
@@ -10,12 +10,8 @@ export interface UBTCommandLine {
  * Resolve the target name from the project and target type.
  * E.g., "MyProject" + "Editor" → "MyProjectEditor"
  */
-export function resolveTargetName(
-  project: UEProject,
-  targetType: BuildTargetType,
-  overrides?: TargetPickOverrides,
-): string {
-  return pickTargetForType(project, targetType, overrides);
+export function resolveTargetName(project: UEProject, targetType: BuildTargetType): string {
+  return pickTargetForType(project, targetType);
 }
 
 /**
@@ -30,12 +26,9 @@ export function buildCommandLine(
     platform: BuildPlatform;
     editorRunning?: boolean;
     additionalArgs?: string[];
-    editorTargetName?: string;
   },
 ): UBTCommandLine {
-  const target = resolveTargetName(project, options.targetType, {
-    editorTargetName: options.editorTargetName,
-  });
+  const target = resolveTargetName(project, options.targetType);
   const args = [
     target,
     options.platform,
@@ -62,12 +55,9 @@ export function cleanCommandLine(
     configuration: BuildConfiguration;
     targetType: BuildTargetType;
     platform: BuildPlatform;
-    editorTargetName?: string;
   },
 ): UBTCommandLine {
-  const target = resolveTargetName(project, options.targetType, {
-    editorTargetName: options.editorTargetName,
-  });
+  const target = resolveTargetName(project, options.targetType);
   const args = [
     target,
     options.platform,
@@ -88,12 +78,9 @@ export function generateClangDatabaseCommandLine(
   options: {
     configuration?: BuildConfiguration;
     platform?: BuildPlatform;
-    editorTargetName?: string;
   } = {},
 ): UBTCommandLine {
-  const target = resolveTargetName(project, 'Editor', {
-    editorTargetName: options.editorTargetName,
-  });
+  const target = resolveTargetName(project, 'Editor');
   const args = [
     target,
     options.platform ?? 'Win64',

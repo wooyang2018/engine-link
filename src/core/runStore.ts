@@ -24,26 +24,20 @@ export interface RunRecord {
 export class RunStore {
   constructor(private readonly projectRoot: string) {}
 
-  async save(record: RunRecord, rawOutput = ''): Promise<void> {
-    const dir = path.join(this.projectRoot, 'Saved', 'EngineLink', 'Runs', record.id);
+  async save(record: RunRecord): Promise<void> {
+    if (record.kind !== 'build') return;
+    const dir = path.join(this.projectRoot, 'Saved', 'EngineLink');
     await fs.promises.mkdir(dir, { recursive: true });
-    await fs.promises.writeFile(path.join(dir, 'summary.json'), JSON.stringify(record, null, 2), 'utf8');
-    if (rawOutput) await fs.promises.writeFile(path.join(dir, 'output.log'), rawOutput, 'utf8');
     await fs.promises.writeFile(
-      path.join(this.projectRoot, 'Saved', 'EngineLink', `latest-${record.kind}.json`),
+      path.join(dir, 'latest-build.json'),
       JSON.stringify(record, null, 2),
       'utf8',
     );
   }
 
-  async get(id: string): Promise<RunRecord> {
-    if (!/^[A-Za-z0-9_.-]+$/.test(id)) throw new Error('Invalid run id');
-    const file = path.join(this.projectRoot, 'Saved', 'EngineLink', 'Runs', id, 'summary.json');
-    return parseJsonValue<RunRecord>(await fs.promises.readFile(file), file);
-  }
-
-  async getLatest(kind: string): Promise<RunRecord | undefined> {
-    const file = path.join(this.projectRoot, 'Saved', 'EngineLink', `latest-${kind}.json`);
+  async getLatest(kind = 'build'): Promise<RunRecord | undefined> {
+    if (kind !== 'build') return undefined;
+    const file = path.join(this.projectRoot, 'Saved', 'EngineLink', 'latest-build.json');
     return fs.promises.readFile(file).then(
       (text) => parseJsonValue<RunRecord>(text, file),
       () => undefined,

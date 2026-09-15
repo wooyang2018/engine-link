@@ -112,13 +112,11 @@ export class EngineLinkTaskProvider implements vscode.TaskProvider<vscode.Task> 
           configuration: config,
           targetType: target,
           platform,
-          editorTargetName: this.ctx.editorTargetName,
         })
       : buildCommandLine(this.ctx.engine!, this.ctx.project!, {
           configuration: config,
           targetType: target,
           platform,
-          editorTargetName: this.ctx.editorTargetName,
         });
     return new vscode.ShellExecution(`"${cmd.executable}"`, cmd.args);
   }

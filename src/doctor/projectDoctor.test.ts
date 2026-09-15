@@ -205,7 +205,6 @@ async function projectContext(): Promise<StandaloneContext> {
   await fs.promises.writeFile(editorPath, '', 'utf8');
   const ctx: StandaloneContext = {
     projectRoot: root,
-    config: { schemaVersion: 1, uproject: 'Game.uproject' },
     project: {
       name: 'Game', uprojectPath: path.join(root, 'Game.uproject'), projectRoot: root,
       engineAssociation: '5.8', modules: [], targets: [],

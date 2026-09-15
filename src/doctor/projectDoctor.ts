@@ -87,9 +87,9 @@ export class ProjectDoctor {
           return;
         }
         gateway = this.gatewayFactory(
-          ctx.config.unrealMcp?.url ?? 'http://127.0.0.1:8000/mcp',
-          ctx.config.unrealMcp?.connectTimeoutMs ?? 5_000,
-          ctx.config.unrealMcp?.requestTimeoutMs ?? 60_000,
+          'http://127.0.0.1:8000/mcp',
+          5_000,
+          60_000,
         );
         let catalog: NativeToolCatalog;
         try {

@@ -58,7 +58,6 @@ export class EngineLinkService {
       editor: await this.getEditorProcess(),
       buildTools: buildTools ?? null,
       defaults: this.buildDefaults(ctx),
-      configPath: path.join(ctx.projectRoot, '.enginelink', 'project.json'),
       responsibilities: {
         engineLink: 'Host-side discovery, cold builds, editor process launch, compile database, and Project Doctor.',
         unrealMcp: 'Editor-side assets, PIE, Live Coding, transactions, and native Unreal MCP toolsets.',
@@ -77,7 +76,6 @@ export class EngineLinkService {
       configuration: options.configuration ?? defaults.configuration,
       targetType: options.targetType ?? defaults.targetType,
       platform: options.platform ?? defaults.platform,
-      editorTargetName: defaults.editorTargetName,
     });
     const projectProcess = await this.findProjectEditor(ctx.project.uprojectPath);
     if (projectProcess) {
@@ -94,7 +92,6 @@ export class EngineLinkService {
       configuration: options.configuration ?? defaults.configuration,
       targetType: options.targetType ?? defaults.targetType,
       platform: options.platform ?? defaults.platform,
-      editorTargetName: defaults.editorTargetName,
     });
     if (!options.confirm) {
       return this.saveBlockedRun(
@@ -111,7 +108,6 @@ export class EngineLinkService {
     const command = generateClangDatabaseCommandLine(ctx.engine, ctx.project, {
       configuration: options.configuration ?? defaults.configuration,
       platform: options.platform ?? defaults.platform,
-      editorTargetName: defaults.editorTargetName,
     });
     const { record, rawOutput } = await this.runCommand('compile-commands', ctx, command.executable, command.args, options);
     if (!record.success) return record;
@@ -134,6 +130,8 @@ export class EngineLinkService {
     record.details = {
       ...(record.details ?? {}),
       postProcess: postProcess.stats,
+      templateFlags: postProcess.templateFlags,
+      projectForcedIncludes: postProcess.projectForcedIncludes,
       compileCommandsPath: placed.compileCommandsPath,
       placedFrom: placed.placedFrom,
     };
@@ -153,8 +151,6 @@ export class EngineLinkService {
     if (existing) return { launched: false, existing: true, process: existing };
     if (!(await exists(ctx.engine.editorPath))) throw new Error(`Unreal Editor not found: ${ctx.engine.editorPath}`);
     const args = [ctx.project.uprojectPath];
-    if (ctx.config.editor?.map) args.push(ctx.config.editor.map);
-    args.push(...(ctx.config.editor?.args ?? []));
     const child = spawn(ctx.engine.editorPath, args, {
       cwd: ctx.projectRoot,
       detached: true,
@@ -176,13 +172,11 @@ export class EngineLinkService {
   }
 
   private buildDefaults(ctx: StandaloneContext) {
-    const editorTargetName = ctx.config.build?.editorTargetName?.trim() || undefined;
     return {
-      configuration: ctx.config.build?.configuration ?? 'Development' as const,
-      targetType: ctx.config.build?.targetType ?? 'Editor' as const,
-      platform: ctx.config.build?.platform ?? 'Win64' as const,
-      editorTargetName,
-      editorTarget: pickTargetForType(ctx.project, 'Editor', { editorTargetName }),
+      configuration: 'Development' as const,
+      targetType: 'Editor' as const,
+      platform: 'Win64' as const,
+      editorTarget: pickTargetForType(ctx.project, 'Editor'),
     };
   }
 
@@ -210,7 +204,7 @@ export class EngineLinkService {
       project: ctx.project.uprojectPath, engine: ctx.engine.root,
       command: { executable, args: redactArgs(args) }, diagnostics,
     };
-    await new RunStore(ctx.projectRoot).save(record, rawOutput);
+    await new RunStore(ctx.projectRoot).save(record);
     return { record, rawOutput };
   }
 
@@ -232,7 +226,7 @@ export class EngineLinkService {
       command: { executable, args: redactArgs(args) },
       diagnostics: [], details: { blocked: true, message, ...details },
     };
-    await new RunStore(ctx.projectRoot).save(record, message);
+    await new RunStore(ctx.projectRoot).save(record);
     return record;
   }
 

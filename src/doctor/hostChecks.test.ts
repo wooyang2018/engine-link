@@ -40,7 +40,6 @@ async function hostContext(): Promise<StandaloneContext> {
   await fs.promises.writeFile(editorPath, '', 'utf8');
   return {
     projectRoot: root,
-    config: { schemaVersion: 1, uproject: 'Game.uproject' },
     project: {
       name: 'Game',
       uprojectPath: path.join(root, 'Game.uproject'),

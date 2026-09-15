@@ -1,6 +1,6 @@
 # Learning Agents 学习笔记
 
-本文整理 **Cursor 与同类 IDE 中的 AI Agent** 能力分层、选用顺序与可验收提示习惯，并对照本仓库 **EngineLink + Unreal MCP** 的双 MCP 实践。操作细节见 [manual-workflows.md](./manual-workflows.md)；六个工具契约见 [mcp-tools.md](./mcp-tools.md)；职责边界见 [architecture.md](./architecture.md)；宿主侧审查要点见 [review-analysis.md](./review-analysis.md)。
+本文整理 **Cursor 与同类 IDE 中的 AI Agent** 能力分层、选用顺序与可验收提示习惯，并对照本仓库 **EngineLink + Unreal MCP** 的双 MCP 实践。六个工具契约见 [mcp-tools.md](./mcp-tools.md)。
 
 **主要参考（2025–2026）：**
 
@@ -101,12 +101,12 @@ Learn Cursor 用「选最窄、能 owning 该工作的面」来选型，而不�
 **stdio vs HTTP：**
 
 - **stdio**：本地进程（如 `node dist/mcp-server.js --project <root>`），适合 EngineLink 这类宿主桥。
-- **Streamable HTTP**：适合已运行的 Unreal Editor MCP（loopback URL 写在 `.enginelink/project.json` 的 `unrealMcp.url`，供 Doctor 等只读诊断）。
+- **Streamable HTTP**：适合已运行的 Unreal Editor MCP（Doctor 使用 loopback `http://127.0.0.1:8000/mcp`）。
 
 **设计原则（与 Microsoft「Tool Use」课一致）：**
 
 - 工具应 **窄、可组合、可审计**（返回值含路径、exit code、run id）。
-- 危险操作（clean、覆盖配置）需要 **显式 confirm** 或策略拒绝并落盘记录——EngineLink 的 `Saved/EngineLink/Runs` 即审计向设计。
+- 危险操作（clean、覆盖配置）需要 **显式 confirm** 或策略拒绝——拒绝结果出现在工具返回体；冷构建摘要写在 `Saved/EngineLink/latest-build.json`。
 - **不要** 用一个大而全的 MCP 网关吞掉另一个 MCP 的职责；双 MCP 并列时由 Agent **按任务路由**。
 
 ---

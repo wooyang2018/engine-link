@@ -33,26 +33,12 @@ export async function discoverProjectTargets(projectRoot: string): Promise<UEBui
   return targets.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export interface TargetPickOverrides {
-  /** Explicit UBT Editor target name from `.enginelink/project.json`. Passed through to UBT as-is. */
-  editorTargetName?: string;
-}
-
 /**
  * Resolve the UBT target name for a project and target type.
  * Falls back to {ProjectName}{Suffix} when no .Target.cs files are found.
  * Multiple matches without a conventional/module hit throw instead of guessing.
  */
-export function pickTargetForType(
-  project: UEProject,
-  targetType: BuildTargetType,
-  overrides?: TargetPickOverrides,
-): string {
-  const override = overrides?.editorTargetName?.trim();
-  if (targetType === 'Editor' && override) {
-    return override;
-  }
-
+export function pickTargetForType(project: UEProject, targetType: BuildTargetType): string {
   const suffix = TARGET_SUFFIXES[targetType] ?? '';
   const conventional = project.name + suffix;
   const discovered = project.targets.filter((target) => target.type === targetType);
@@ -90,7 +76,7 @@ export function pickTargetForType(
   const names = discovered.map((target) => target.name).join(', ');
   if (targetType === 'Editor') {
     throw new Error(
-      `Ambiguous Editor targets: ${names}. Set build.editorTargetName in .enginelink/project.json.`,
+      `Ambiguous Editor targets: ${names}. Keep a single Source/*Editor.Target.cs or match the conventional {Project}Editor name.`,
     );
   }
   throw new Error(`Ambiguous ${targetType} targets: ${names}.`);

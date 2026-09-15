@@ -94,8 +94,6 @@ export interface EngineLinkContext {
   diagnosticCollection: vscode.DiagnosticCollection;
   lastBuildErrors: ParsedDiagnostic[];
   lastBuildResult: BuildResult | undefined;
-  /** From `.enginelink/project.json` `build.editorTargetName`. */
-  editorTargetName?: string;
   /** Absolute path to `dist/cli.js` inside the installed extension. */
   cliPath?: string;
 }
