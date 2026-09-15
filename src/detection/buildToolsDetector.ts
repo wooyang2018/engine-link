@@ -109,18 +109,3 @@ async function checkWindowsSDK(installPath: string): Promise<boolean> {
     return false;
   }
 }
-
-/**
- * Get a short display name for the build tools (e.g., "VS 2022 (17.9)").
- */
-export function getBuildToolsDisplayName(tools: VSBuildTools): string {
-  const majorVersion = tools.version.split('.')[0];
-  const yearMap: Record<string, string> = {
-    '17': '2022',
-    '16': '2019',
-    '15': '2017',
-  };
-  const year = yearMap[majorVersion] ?? majorVersion;
-  const shortVersion = tools.version.split('.').slice(0, 2).join('.');
-  return `VS ${year} (${shortVersion})`;
-}

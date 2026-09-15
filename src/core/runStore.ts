@@ -17,7 +17,6 @@ export interface RunRecord {
   project: string;
   engine: string;
   diagnostics?: unknown[];
-  evidencePath?: string;
   details?: Record<string, unknown>;
 }
 

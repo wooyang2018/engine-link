@@ -14,18 +14,6 @@ export async function fileExists(filePath: string): Promise<boolean> {
 }
 
 /**
- * Check if a directory exists at the given path.
- */
-export async function dirExists(dirPath: string): Promise<boolean> {
-  try {
-    const stat = await fs.promises.stat(dirPath);
-    return stat.isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Resolve the UBT executable path from an engine root.
  */
 export function resolveUBTPath(engineRoot: string): string {
@@ -44,13 +32,6 @@ export function resolveUBTPath(engineRoot: string): string {
  */
 export function resolveEditorPath(engineRoot: string): string {
   return path.join(engineRoot, 'Engine', 'Binaries', 'Win64', 'UnrealEditor.exe');
-}
-
-/**
- * Extract the project name from a .uproject file path.
- */
-export function projectNameFromPath(uprojectPath: string): string {
-  return path.basename(uprojectPath, '.uproject');
 }
 
 /**

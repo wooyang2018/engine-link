@@ -2,54 +2,45 @@
 
 🌐 [enginelink.dev](https://enginelink.dev)
 
-**Host-side Unreal Engine development bridge** — discover, build, launch, and diagnose UE projects from an IDE, CLI, or AI agent.
+**Host-side Unreal Engine development bridge** — discover, cold-build, launch, and diagnose UE projects from Cursor, CLI, or an AI agent.
 
-EngineLink owns the work that happens outside Unreal Editor: project/toolchain discovery, cold UBT builds, Editor process launch, compile databases, diagnostics, and Project Doctor. Editor-side assets, PIE, transactions, and Live Coding belong to Unreal's native MCP. The two MCP servers are independent and either can be used without the other. EngineLink does not assume VibeUE is installed and does not run gameplay tests.
+EngineLink owns work **outside** Unreal Editor: `.uproject` / engine / VS toolchain discovery, UnrealBuildTool cold builds, Editor process launch, `compile_commands.json` for clangd, and Project Doctor. Editor-side assets, PIE, transactions, and Live Coding belong to Unreal’s native MCP. The two MCP servers are independent. EngineLink does not assume VibeUE and does not run gameplay tests.
 
-> 🧪 **Status:** Early preview. Windows-only for now.
+Current version: **0.2.1**. Host discovery and Editor-process checks are **Windows-first**.
 
-> 👋 **TL;DR:** I've been building software for 10 years but game dev is new to me. As I learn Unreal Engine, I found Rider and Visual Studio to be old-fashioned compared to modern AI-first editors — so I decided to give Cursor full UE capabilities. I'm testing this extension as I go, learning and breaking things along the way. Contributions and feedback are very welcome :)
-
----
-
-## Setup Guide
-
-Getting EngineLink running is a three-step process: install the system prerequisites, install EngineLink, then install the C/C++ extension for IntelliSense.
-
-### Step 1 — System Prerequisites
-
-You need **Windows**, **Unreal Engine**, and **Visual Studio** with the right components.
-
-#### Unreal Engine 5.4+
-
-Install via the [Epic Games Launcher](https://www.unrealengine.com/). EngineLink has been tested on **UE 5.4 – 5.7**.
-
-#### Visual Studio with C++ and Clang
-
-Open **Visual Studio Installer**, click **Modify** on your install (Community / Build Tools / etc.), and make sure these components are enabled:
-
-**Workload:**
-- **Desktop development with C++** (this gives you MSVC, Windows SDK, and the core build tools UE needs)
-
-**Individual Components** (search in the installer):
-- **C++ Clang Compiler for Windows** — needed by UBT to generate `compile_commands.json` for IntelliSense
-- **MSBuild support for LLVM (clang-cl) toolset** *(optional but recommended)*
-
-> If you skip Clang, EngineLink will still build your project fine (UE uses MSVC), but `compile_commands.json` generation will fail and you won't get full IntelliSense. You can always add Clang later.
-
-#### Cursor
-
-Install [Cursor](https://cursor.sh) (version `1.85.0` or later).
+> Early preview. Contributions and feedback are welcome.
 
 ---
 
-### Step 2 — Install EngineLink
+## What it does
 
-**From Marketplace** — *coming soon.*
+Three entry points share [`EngineLinkService`](src/core/service.ts):
 
-**From VSIX** — download or build the `.vsix`, then in Cursor: **Extensions → ... → Install from VSIX...**
+| Entry | How |
+|---|---|
+| Cursor extension | Activates on `**/*.uproject`. Status bar, commands, Tasks, IntelliSense sidecar. |
+| MCP | `node dist/mcp-server.js --project <root>` (stdio, tools only). |
+| CLI | `node dist/cli.js <command> --project <root>` (or `npx enginelink` after install). |
 
-**From Source:**
+Cursor **build / clean / generate / launch** go through the same Service as MCP/CLI. Tasks: `compile-commands` shells `node dist/cli.js compile-commands`; `build` / `clean` spawn UBT directly so the Tasks panel can stream output.
+
+---
+
+## Setup
+
+### 1. Prerequisites
+
+- **Windows**
+- **Unreal Engine 5.4+** via [Epic Games Launcher](https://www.unrealengine.com/) or a source/custom install. Tested on **UE 5.4–5.7**.
+- **Visual Studio** (Community / Build Tools / etc.) with **Desktop development with C++** (MSVC + Windows SDK).
+- **C++ Clang Compiler for Windows** if you want `compile_commands.json` (UBT `GenerateClangDatabase`). Builds still use MSVC without Clang.
+- [Cursor](https://cursor.sh) `1.85.0` or later (VS Code engine `^1.85.0`).
+
+### 2. Install EngineLink
+
+Marketplace listing is not published yet.
+
+**From source:**
 
 ```bash
 git clone https://github.com/rmoubayed/engine-link.git
@@ -58,201 +49,130 @@ npm install
 npm run build
 ```
 
-Press `F5` to launch the Extension Development Host, or package it with `npm run package`.
+Press `F5` for the Extension Development Host, or package/install:
 
----
-
-### Step 3 — C/C++ for Cursor (IntelliSense — installed automatically)
-
-EngineLink handles **building** your project, but you need a language server for **IntelliSense** (code completion, go-to-definition, diagnostics on the fly).
-
-EngineLink is an **extension pack** that automatically installs **[C/C++ for Cursor](https://marketplace.visualstudio.com/items?itemName=anysphere.cpptools)** — Cursor's official C/C++ extension. It adds LSP, debugging, and code browsing support using **clangd** under the hood. You don't need to install it separately.
-
-#### Where `compile_commands.json` lives
-
-UnrealBuildTool often writes the database next to the **engine** (e.g. `UE_5.7\compile_commands.json`). **EngineLink always copies it to your `.uproject` folder** as `compile_commands.json` at the **project root** after a successful run, so **clangd** can find it when you open files under `Source/` (it walks up to the workspace root).
-
-If IntelliSense still cannot find the compilation database (e.g. generation failed or you use a non-standard layout), you can point clangd at the engine folder manually in **`.vscode/settings.json`**:
-
-```json
-{
-  "clangd.arguments": [
-    "--compile-commands-dir=C:/Program Files/Epic Games/UE_5.7"
-  ]
-}
+```bash
+npm run package          # vsce → .vsix
+npm run install:vsix     # Scripts/Install-EngineLink.ps1 (build, test, install into Cursor)
 ```
 
-Use the **directory** that contains `compile_commands.json`, forward slashes, then reload the window.
+In Cursor: **Extensions → … → Install from VSIX…**
 
-> **Multi-root warning:** vscode-clangd runs a single server per window, so `--compile-commands-dir` applies to *every* folder in a multi-root workspace and forces them all onto one project's database (causing `file not found` / undeclared-identifier errors in the other projects). EngineLink therefore does **not** set this flag automatically — prefer letting clangd find each project root's `compile_commands.json` via its per-file ancestor search, and only use the flag as a manual escape hatch in single-root windows.
+EngineLink is an **extension pack** that pulls **[C/C++ for Cursor](https://marketplace.visualstudio.com/items?itemName=anysphere.cpptools)** (`anysphere.cpptools`) for clangd.
 
-#### MSVC intrinsic false positives (builtin_definition)
+### 3. Open a project
 
-When clangd parses UE code with MSVC-style headers, you may see **"definition of builtin function"** errors on system headers. This is a known clangd/MSVC quirk, not an error in your code — the real UE build is unaffected.
+Open a folder that contains a `.uproject`. EngineLink activates, discovers the project and engine, optionally generates `compile_commands.json`, upserts a managed `.clangd` block and `.vscode/settings.json`, and registers the MCP server for Cursor / Codex / Claude Code.
 
-**EngineLink handles this automatically.** On activation it upserts a managed block in your project's `.clangd` file:
-
-```yaml
-# <<< enginelink-managed >>>
-Diagnostics:
-  Suppress: builtin_definition
-CompileFlags:
-  Add:
-    - --query-driver=**/clang-cl.exe
-# <<< end-enginelink-managed >>>
-```
-
-This only suppresses that one diagnostic class. EngineLink replaces only its own managed region and won't touch the rest of your `.clangd`. To disable: set `enginelink.upsertClangdConfig` to `false`.
-
-#### Stale `compile_commands.json` and merged (unity) builds
-
-UBT's normal Editor build often compiles many `.cpp` files through auto-generated `Module.*.cpp` **merged compilation** units. The `compile_commands.json` UBT emits separately can still reference per-file `@*.obj.rsp` response files that no longer exist after a regular build — clangd then fails to resolve engine headers (e.g. `'Animation/AnimInstance.h' file not found`).
-
-**EngineLink handles this automatically:**
-
-1. UBT generation uses `-NoExecCodeGenActions` and `-OutputDir=<project root>` for faster, correctly placed output.
-2. After **Generate compile_commands.json** (activation auto-generate, the command, MCP/CLI, or the compile-commands Task), EngineLink **post-processes** `compile_commands.json`:
-   - Inlines `@*.rsp` into clangd-friendly `arguments` arrays
-   - Remaps broken per-file entries via `Module.*.cpp` when merged builds are in use
-   - Adds matching `.h` entries so opening headers gets a compilation unit (UE `Private/Foo.cpp` → `Public/Foo.h`; project `.h` entries are always re-derived from `.cpp`, not kept from input)
-3. On activation, if the database is missing, EngineLink can generate it when `enginelink.autoGenerateCompileCommands` is enabled. If it looks stale (many missing `.rsp` files), EngineLink post-processes it and regenerates via the same Service path when entries are still broken. Cold **build** does not refresh the compile database.
-
-EngineLink also upserts `.vscode/settings.json` in the UE project folder so `clangd` and C/C++ use `${workspaceFolder}/compile_commands.json` in multi-root workspaces.
-
-If IntelliSense is still wrong after a normal UBT build, run **Generate compile_commands.json** once, then reload the window. Engine source navigation (F12 into `UAnimInstance`, etc.) works once include paths resolve — you do not need to add the engine source tree to git or the workspace.
+If detection fails, set `enginelink.engineRoot` / `enginelink.projectFile` (extension) or `ENGINELINK_ENGINE_ROOT` (CLI/MCP).
 
 ---
 
-## Quick Start
+## IntelliSense (`compile_commands.json` + clangd)
 
-Once everything is installed:
+UBT often writes the database next to the **engine**. EngineLink **places** it at the **project root** (`placeCompileCommands`: UBT log path → engine root → `Intermediate/Build` search), then **post-processes** it for clangd (inline `@*.rsp`, Unity `Module.*.cpp` remap, header entries, engine-source navigation).
 
-1. Open a folder containing a `.uproject` file in Cursor
-2. EngineLink activates automatically and:
-   - Finds your `.uproject` and parses `EngineAssociation`
-   - Discovers the matching UE installation from the registry
-   - Locates VS Build Tools
-   - Generates `compile_commands.json` (if Clang is installed)
-   - Creates/updates `.clangd` for MSVC suppression
-3. The status bar shows your project name, engine version, and build actions
-4. Press **`Ctrl+Shift+B`** to build
+**Who generates it**
 
-If auto-detection fails, override paths in [Configuration](#configuration).
+- Activation, if the file is missing or still broken after post-process, when `enginelink.autoGenerateCompileCommands` is true.
+- Command **Generate compile_commands.json**, MCP `enginelink_generate_compile_commands`, CLI `compile-commands`, or a Task with `action: generateCompileCommands`.
+
+All of those UBT runs go through `EngineLinkService`. The Cursor command and activation then update `.clangd` (`templateFlags`, forced includes, IDE overrides header in extension globalStorage) and try `clangd.restart`. **MCP/CLI do not** touch `.clangd` or restart clangd.
+
+**Cold `build` does not refresh** the compile database. A normal Editor UBT build can invalidate per-file `.rsp` files; run **Generate compile_commands.json** if IntelliSense breaks after a regular build.
+
+**`.clangd`:** on activation EngineLink upserts only the `# <<< enginelink-managed >>>` region (`builtin_definition` suppress, `--query-driver=**/clang-cl.exe`, later engine PathMatch from post-process). Disable with `enginelink.upsertClangdConfig: false`.
+
+**`.vscode/settings.json`:** managed block sets `C_Cpp.default.compileCommands` to `${workspaceFolder}/compile_commands.json` and `clangd.arguments` `--query-driver`. EngineLink **does not** set `--compile-commands-dir` (one clangd per window would pin every multi-root folder to one database).
 
 ---
 
-## Features
+## Quick start
 
-### Build Integration
-
-- **Build / Clean** — invoke UnrealBuildTool directly with full output streaming
-- **Editor-aware cold builds** — refuses a full build while the same project is open and points agents to Unreal MCP for compatible Live Coding work
-- **`compile_commands.json`** — auto-generates via UBT's `GenerateClangDatabase` mode, post-processes `@*.rsp` for clangd, and refreshes after builds when enabled
-- **`.clangd` management** — suppresses MSVC/Clang `builtin_definition` false positives and sets `--query-driver` for clang-cl
-
-### Auto-Detection
-
-- **Project** — scans workspace for `.uproject` files, parses `EngineAssociation`
-- **Engine** — reads Windows registry (launcher + source builds) and common paths
-- **Build tools** — locates Visual Studio via `vswhere`
-
-### AI Integration
-
-- **Independent MCP server** — runs without the Cursor extension and exposes only host-side EngineLink operations
-- **CLI** — exposes the same core operations to humans and CI
-- **Project MCP registration** — registers EngineLink for Cursor, Codex, and Claude Code when the extension activates
-- **UE Project Doctor** — one host + native Unreal MCP diagnostic run for toolchain, Editor readiness, Git/`--path` asset references, and Blueprint compile/graph issues
-
-### Editor UX
-
-- **Status bar** — project name, engine version, build config, and action buttons
-- **Problems panel** — MSVC and UBT errors surfaced as native diagnostics
-- **Progress notifications** — build progress via spinner and toast
-- **Task provider** — `enginelink` tasks for the Tasks panel and `tasks.json`
+1. Open a folder with a `.uproject`.
+2. Status bar: Build, Clean, configuration, target type, platform, project, engine, Launch.
+3. **`Ctrl+Shift+B`** runs EngineLink Build (when `enginelink.projectDetected`).
+4. For agents: `enginelink_get_environment` → close Editor if you need a cold build → `enginelink_build` → `enginelink_generate_compile_commands` if clangd needs a fresh DB → `enginelink_launch_editor` → `enginelink_project_doctor`. Asset/PIE/Live Coding → Unreal MCP.
 
 ---
 
 ## Commands
 
-| Command | Keybinding | Description |
+| Command | Binding | Notes |
 |---|---|---|
-| **Build** | `Ctrl+Shift+B` | Build the project via UnrealBuildTool |
-| **Clean** | — | Remove build artifacts |
-| **Launch Unreal Editor** | — | Open UnrealEditor.exe with the current project |
-| **Generate compile_commands.json** | — | Run UBT `GenerateClangDatabase` |
-| **Select Engine Installation** | — | Pick from discovered engine installs |
-| **Select UE Project** | — | Pick from detected `.uproject` files |
-| **Select Build Configuration** | — | Debug / DebugGame / Development / Shipping / Test |
-| **Select Build Target Type** | — | Editor / Game / Client / Server |
+| **Build** | `Ctrl+Shift+B` | Cold UBT. On Windows, **refuses** if `UnrealEditor.exe` already has this `.uproject` on its command line. |
+| **Clean** | — | Modal confirm in the UI; MCP/CLI need `confirm=true` / `--confirm`. |
+| **Launch Unreal Editor** | — | `UnrealEditor.exe <uproject>` only. If that project is already open, returns the existing process (does not spawn another). |
+| **Generate compile_commands.json** | — | `GenerateClangDatabase` + place + post-process + `.clangd` + `clangd.restart`. |
+| **Select Engine / Project / Configuration / Target Type** | — | Writes Cursor `enginelink.*` settings. |
 
-Build and Launch also appear as icon buttons in the editor title bar.
+Build and Launch also appear on the editor title **run** group; Clean / Generate / config picks on the title menu. All of those `when` clauses require `enginelink.projectDetected`.
+
+UBT Editor target names come from `Source/**/*.Target.cs` (not `Plugins/`): conventional `{Project}Editor`, primary Runtime module, or the single discovered Editor target. Ambiguous Editor targets **throw**; there is no override file.
 
 ---
 
 ## Configuration
 
-All settings live under `enginelink.*` in your workspace or user `settings.json`.
+Cursor / VS Code `enginelink.*` (workspace or user). CLI/MCP **do not** read these; they resolve the engine via `ENGINELINK_ENGINE_ROOT`, then registry / `D:\Software\UE_<association>` / Epic Games paths.
 
-| Setting | Type | Default | Description |
-|---|---|---|---|
-| `enginelink.engineRoot` | `string` | `""` | Manual override for the UE root directory |
-| `enginelink.projectFile` | `string` | `""` | Path to a specific `.uproject` file |
-| `enginelink.buildConfiguration` | `enum` | `Development` | `Debug`, `DebugGame`, `Development`, `Shipping`, `Test` |
-| `enginelink.buildTarget` | `enum` | `Editor` | `Editor`, `Game`, `Client`, `Server` |
-| `enginelink.platform` | `string` | `Win64` | Target platform |
-| `enginelink.autoGenerateCompileCommands` | `boolean` | `true` | Auto-generate `compile_commands.json` on detection (needs Clang) |
-| `enginelink.upsertClangdConfig` | `boolean` | `true` | Auto-update `.clangd` with `builtin_definition` suppression |
-| `enginelink.vsBuildTools.path` | `string` | `""` | Manual override for VS Build Tools path |
-| `enginelink.statusBar.showContextInfo` | `boolean` | `true` | Show platform and project name in the status bar |
+| Setting | Default | Description |
+|---|---|---|
+| `enginelink.engineRoot` | `""` | Manual engine root for the extension. |
+| `enginelink.projectFile` | `""` | Absolute `.uproject` if several exist. CLI/MCP require **exactly one** `.uproject` in the project root. |
+| `enginelink.buildConfiguration` | `Development` | Debug / DebugGame / Development / Shipping / Test |
+| `enginelink.buildTarget` | `Editor` | Editor / Game / Client / Server (type, not a specific target name) |
+| `enginelink.platform` | `Win64` | Passed to UBT |
+| `enginelink.autoGenerateCompileCommands` | `true` | Generate/repair compile DB on **activation** |
+| `enginelink.upsertClangdConfig` | `true` | Maintain the managed `.clangd` region |
+| `enginelink.vsBuildTools.path` | `""` | vswhere override |
+| `enginelink.statusBar.showContextInfo` | `true` | Show platform + project name on the status bar |
+
+There is **no** `.enginelink/project.json`. Leftover files in that folder are ignored.
 
 ---
 
-## MCP Server (AI Agent Tools)
+## MCP and CLI
 
-EngineLink ships a standalone stdio MCP server. The MCP client launches it directly; the extension never pre-spawns it or proxies Unreal MCP. Point it at a project with `node dist/mcp-server.js --project <project-root>`.
+The extension never owns the MCP process. On activation it upserts **only** the `enginelink` server entry:
 
-When the Cursor extension activates inside an Unreal project, it registers EngineLink in the three supported project-level client configurations:
-
-| Client | Project configuration |
+| Client | File |
 |---|---|
 | Cursor | `.cursor/mcp.json` |
-| Codex | `.codex/config.toml` |
+| Codex | `.codex/config.toml` (`[mcp_servers.enginelink]`) |
 | Claude Code | `.mcp.json` |
 
-Registration is idempotent and preserves unrelated MCP servers. Cursor and Claude Code use JSON `mcpServers`; Codex uses TOML `mcp_servers`. The extension owns registration, while each client owns launching the standalone stdio process.
+| MCP | CLI | Result |
+|---|---|---|
+| `enginelink_get_environment` | `environment` | `enginelink.environment.v1` |
+| `enginelink_project_doctor` | `project-doctor` | `enginelink.doctor-view.v1` (sync, may take minutes) |
+| `enginelink_build` | `build` | `enginelink.run.v1` |
+| `enginelink_clean` | `clean --confirm` | `enginelink.run.v1` |
+| `enginelink_generate_compile_commands` | `compile-commands` | `enginelink.run.v1` |
+| `enginelink_launch_editor` | `launch` | `{ launched, existing, pid? / process? }` |
 
-| Tool | Description |
-|---|---|
-| `enginelink_get_environment` | Project, engine, toolchain, build defaults, and current Editor process |
-| `enginelink_project_doctor` | Run a read-only Project Doctor diagnostic to completion; returns `enginelink.doctor-view.v1` |
-| `enginelink_build` | Cold build; refuses while this project is open in Editor |
-| `enginelink_clean` | Clean build artifacts with explicit confirmation |
-| `enginelink_generate_compile_commands` | Generate and post-process `compile_commands.json` |
-| `enginelink_launch_editor` | Launch Editor or return the existing PID |
+Shared flags (not on `project-doctor`): MCP `taskId` / `reason`; CLI `--task-id` / `--reason`. Build/clean also take `configuration` / `targetType` / `platform` (`--configuration` / `--target` / `--platform`). Compile-commands: `configuration` / `platform` only; target is always Editor. Defaults: Development / Editor / Win64.
 
-Live Coding is deliberately not an EngineLink MCP tool. Agents should call Unreal MCP's Live Coding toolset directly.
+Doctor: optional `paths` / repeated `--path`; CLI `--timeout-ms` (internal default 180s). Connects to Unreal MCP at `http://127.0.0.1:8000/mcp`.
 
-### CLI and client configuration
+MCP `isError` is true only on thrown errors or `enginelink.run.v1` with `success === false`. A Doctor `failed` / `incomplete` view is **not** `isError`. CLI exits 1 on failed runs and unsuccessful Doctor statuses.
+
+**Disk:** successful or blocked **build** overwrites `Saved/EngineLink/latest-build.json` (Doctor’s authoritative cold-build pointer). Clean / compile-commands / launch are return-body only. Doctor writes `Saved/EngineLink/Doctor/` and `doctor.lock`.
 
 ```powershell
-node dist/cli.js project-doctor --project D:/Workspace/MyGame
-node dist/cli.js project-doctor --project D:/Workspace/MyGame --path Content/BP/BP_Test.uasset
+node dist/cli.js environment --project D:/Workspace/MyGame
 node dist/cli.js build --project D:/Workspace/MyGame --reason "verify C++ change"
+node dist/cli.js compile-commands --project D:/Workspace/MyGame
+node dist/cli.js project-doctor --project D:/Workspace/MyGame --path Content/BP/BP_Test.uasset
 ```
 
-See [MCP / CLI tools](docs/mcp-tools.md) for inputs, outputs, and boundaries of the six tools. See [UE Project Doctor](docs/project-doctor.md) for coverage vs issues and why gameplay tests stay in the game project's CQTest suite.
+Details: [docs/mcp-tools.md](docs/mcp-tools.md), [docs/project-doctor.md](docs/project-doctor.md). Agent routing notes: [docs/learning-agents.md](docs/learning-agents.md). Gameplay tests stay in the game project (see [docs/cqtest-study-notes.md](docs/cqtest-study-notes.md)).
 
 ---
 
-## Unreal C++ conventions
+## Tasks
 
-EngineLink does **not** write `.cursor/rules/*.mdc`, `AGENTS.md`, or `CLAUDE.md` into user projects. Naming, reflection macros, modules, and common patterns are documented as study notes: [docs/ue-cpp-study-notes.md](docs/ue-cpp-study-notes.md).
-
----
-
-## Task Provider
-
-EngineLink registers an `enginelink` task type for `.vscode/tasks.json`:
+`enginelink` task type for `.vscode/tasks.json`:
 
 ```json
 {
@@ -269,72 +189,13 @@ EngineLink registers an `enginelink` task type for `.vscode/tasks.json`:
 }
 ```
 
-Problem matchers `$enginelink-msvc` and `$enginelink-ubt` are included for parsing build output.
+`action`: `build` | `clean` | `generateCompileCommands`. Problem matchers: `$enginelink-msvc`, `$enginelink-ubt`.
 
 ---
 
-## Contributing
+## Unreal C++ conventions
 
-This project is early and there's a lot to improve. Jump in!
-
-1. Fork the repo
-2. Create a feature branch (`git checkout -b feature/my-feature`)
-3. Make your changes
-4. Run `npm run lint && npm run typecheck`
-5. Open a pull request
-
-**Areas where help is needed:**
-- **Testing** — Vitest is set up but coverage is still thin
-- **macOS / Linux** — host-side engine and toolchain discovery are Windows-first right now
-
----
-
-## Project Structure
-
-```
-src/
-├── extension.ts                  # Entry point — activation, command registration
-├── cli.ts                        # Standalone human/CI interface
-├── constants.ts                  # IDs, command names, config keys
-├── types.ts                      # Shared TypeScript interfaces
-├── build/
-│   ├── ubt.ts                    # UBT command-line construction
-│   └── taskProvider.ts           # Cursor task provider
-├── core/
-│   ├── config.ts                 # .uproject discovery
-│   ├── discovery.ts              # IDE-independent project/engine resolution
-│   ├── service.ts                # Shared host-side operations
-│   ├── runStore.ts               # Saved/EngineLink/latest-build.json
-├── commands/
-│   ├── coreCommands.ts           # Cursor adapter over shared core
-│   ├── launchCommands.ts         # Legacy Editor launch helper
-│   └── generateCommands.ts       # compile_commands.json generation
-├── config/
-│   └── settings.ts               # Typed settings accessor
-├── cursor/
-│   ├── clangdConfig.ts           # .clangd managed block upsert
-│   ├── placeCompileCommands.ts   # copy UBT compile DB to project root
-│   └── vscodeSettings.ts
-├── detection/
-│   ├── projectDetector.ts        # .uproject scanning and selection
-│   ├── engineDiscovery.ts        # Engine discovery (registry + filesystem)
-│   └── buildToolsDetector.ts     # VS Build Tools detection via vswhere
-├── mcp/
-│   ├── clientRegistration.ts     # Cursor/Codex/Claude project registration
-│   ├── server.ts                 # Standalone MCP server process
-│   └── tools.ts                  # Host-only MCP contracts
-├── parsers/
-│   ├── buildOutputParser.ts      # MSVC / UBT / linker output parsing
-│   └── uprojectParser.ts         # .uproject JSON parsing
-├── platform/
-│   ├── process.ts                # spawnAsync, isUnrealEditorRunning
-│   ├── paths.ts                  # File/directory helpers
-│   └── registry.ts               # Windows registry read utilities
-└── ui/
-    ├── statusBar.ts              # Status bar items
-    ├── outputChannel.ts          # Output channel factory
-    └── quickPicks.ts             # Quick-pick menus
-```
+EngineLink does **not** write `.cursor/rules/*.mdc`, `AGENTS.md`, or `CLAUDE.md`. Study notes: [docs/ue-cpp-study-notes.md](docs/ue-cpp-study-notes.md).
 
 ---
 
@@ -342,21 +203,55 @@ src/
 
 ```bash
 npm install
-npm run build        # one-shot build
-npm run watch        # rebuild on change
-npm run lint         # ESLint
-npm run format       # Prettier
-npm run typecheck    # TypeScript type checking
-npm run test         # Vitest
-npm run package      # produces .vsix via vsce
+npm run build        # esbuild → dist/extension.js, dist/mcp-server.js, dist/cli.js
+npm run watch
+npm run lint
+npm run format
+npm run typecheck
+npm run test         # vitest, src/**/*.test.ts
+npm run package      # vsce (runs build first)
 ```
 
-Built with [esbuild](https://esbuild.github.io/) — produces `dist/extension.js`, `dist/mcp-server.js`, and `dist/cli.js`.
+Open this repo in Cursor, `F5`, then open a UE project in the new window.
 
-To run locally: open this repo in Cursor, press `F5`, then open a UE project folder in the new window.
+### Source layout
+
+```
+src/
+├── extension.ts                 # Activation, commands, detection pipeline
+├── cli.ts                       # CLI
+├── mcp/server.ts                # MCP stdio
+├── mcp/tools.ts                 # Six tool schemas
+├── mcp/clientRegistration.ts    # Project-level MCP upsert
+├── core/service.ts              # Shared operations
+├── core/config.ts               # Find unique .uproject
+├── core/discovery.ts            # CLI/MCP project + engine
+├── core/runStore.ts             # latest-build.json
+├── doctor/                      # Project Doctor
+├── commands/                    # Cursor adapters + clangd sidecar
+│   ├── coreCommands.ts
+│   └── generateCommands.ts
+├── build/ubt.ts + taskProvider.ts
+├── cursor/                      # compile DB place/post-process, .clangd, settings
+├── detection/                   # Extension project/engine/VS discovery
+├── parsers/
+├── platform/
+├── config/settings.ts
+└── ui/statusBar.ts, outputChannel.ts
+```
+
+---
+
+## Contributing
+
+1. Fork and branch
+2. `npm run lint && npm run typecheck && npm run test`
+3. Open a pull request
+
+Helpful areas: more tests; Linux/macOS host discovery and Editor-process detection.
 
 ---
 
 ## License
 
-[MIT](LICENSE) &copy; 2026 EngineLink
+[MIT](LICENSE) © 2026 EngineLink

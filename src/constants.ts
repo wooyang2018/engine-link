@@ -13,36 +13,11 @@ export const Commands = {
   SelectTarget: `${EXTENSION_ID}.selectTarget`,
 } as const;
 
-/** Configuration keys */
-export const Config = {
-  EngineRoot: `${EXTENSION_ID}.engineRoot`,
-  ProjectFile: `${EXTENSION_ID}.projectFile`,
-  BuildConfiguration: `${EXTENSION_ID}.buildConfiguration`,
-  BuildTarget: `${EXTENSION_ID}.buildTarget`,
-  Platform: `${EXTENSION_ID}.platform`,
-  AutoGenerateCompileCommands: `${EXTENSION_ID}.autoGenerateCompileCommands`,
-  UpsertClangdConfig: `${EXTENSION_ID}.upsertClangdConfig`,
-  VSBuildToolsPath: `${EXTENSION_ID}.vsBuildTools.path`,
-  StatusBarShowContextInfo: `${EXTENSION_ID}.statusBar.showContextInfo`,
-} as const;
-
 /** Context keys set via vscode.commands.executeCommand('setContext', ...) */
 export const ContextKeys = {
   ProjectDetected: `${EXTENSION_ID}.projectDetected`,
   EngineFound: `${EXTENSION_ID}.engineFound`,
   BuildToolsFound: `${EXTENSION_ID}.buildToolsFound`,
-  IsBuilding: `${EXTENSION_ID}.isBuilding`,
-} as const;
-
-/** UE version profiles */
-export const UE_PROFILES = {
-  '5.4+': {
-    versionRange: '5.4+',
-    ubtRelativePath: 'Engine/Binaries/DotNET/UnrealBuildTool/UnrealBuildTool.exe',
-    editorRelativePath: 'Engine/Binaries/Win64/UnrealEditor.exe',
-    supportsGenerateClangDatabase: true,
-    compileCommandsOutputPattern: '**/compile_commands.json',
-  },
 } as const;
 
 /** Windows registry paths */

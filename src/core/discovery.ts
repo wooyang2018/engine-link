@@ -1,4 +1,3 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import { parseUProject } from '../parsers/uprojectParser';
 import { discoverProjectTargets } from '../parsers/targetParser';
@@ -73,15 +72,4 @@ async function resolveAssociationFromRegistry(association: string): Promise<stri
     return undefined;
   }
   return readRegistryValue(`${Registry.LauncherInstalls}\\${association}`, 'InstalledDirectory');
-}
-
-export async function listProjectPlugins(projectRoot: string): Promise<Array<{ name: string; nestedGit: boolean }>> {
-  const pluginsRoot = path.join(projectRoot, 'Plugins');
-  const entries = await fs.promises.readdir(pluginsRoot, { withFileTypes: true }).catch(() => []);
-  const result: Array<{ name: string; nestedGit: boolean }> = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    result.push({ name: entry.name, nestedGit: await exists(path.join(pluginsRoot, entry.name, '.git')) });
-  }
-  return result;
 }

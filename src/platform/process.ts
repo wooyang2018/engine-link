@@ -7,23 +7,6 @@ export interface ProcessCancellationToken {
 }
 
 /**
- * Check if UnrealEditor.exe is currently running via tasklist.
- * Shared utility used by build, launch, and live coding commands.
- *
- * Note: We avoid `tasklist /FI` because the quoted filter arg has
- * quoting/escaping issues across different shell environments.
- * Simply listing all processes and checking stdout is more reliable.
- */
-export async function isUnrealEditorRunning(): Promise<boolean> {
-  try {
-    const result = await spawnAsync('tasklist', []);
-    return result.stdout.includes('UnrealEditor.exe');
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Spawn a process and return the result as a promise.
  * Supports line-by-line streaming and cancellation.
  */

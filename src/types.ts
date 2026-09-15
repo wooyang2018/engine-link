@@ -74,15 +74,6 @@ export interface SpawnResult {
   stderr: string;
 }
 
-/** UE version profile for adaptability */
-export interface UEVersionProfile {
-  versionRange: string;
-  ubtRelativePath: string;
-  editorRelativePath: string;
-  supportsGenerateClangDatabase: boolean;
-  compileCommandsOutputPattern: string;
-}
-
 /** Extension-wide shared context */
 export interface EngineLinkContext {
   project: UEProject | undefined;

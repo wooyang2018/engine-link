@@ -294,16 +294,3 @@ function registerCommands(extensionContext: vscode.ExtensionContext) {
 function setContext(key: string, value: unknown): Thenable<void> {
   return vscode.commands.executeCommand('setContext', key, value);
 }
-
-/** Export context for MCP server and other modules */
-export function getContext(): EngineLinkContext {
-  return context;
-}
-
-export function getSettings(): EngineLinkSettings {
-  return settings;
-}
-
-export function getStatusBar(): StatusBarManager {
-  return statusBar;
-}

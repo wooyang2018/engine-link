@@ -93,10 +93,3 @@ export function generateClangDatabaseCommandLine(
 
   return { executable: engine.ubtPath, args };
 }
-
-/**
- * Format a UBT command line for display.
- */
-export function formatCommandLine(cmd: UBTCommandLine): string {
-  return `"${cmd.executable}" ${cmd.args.join(' ')}`;
-}
