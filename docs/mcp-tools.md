@@ -1,6 +1,6 @@
 # EngineLink MCP / CLI 工具
 
-EngineLink 对外只有 **6 个 MCP 工具**，与 **6 条 CLI 命令**一一对应。实现都走 `EngineLinkService`。本文是这 6 个入口的原理、设计、输入与输出；Project Doctor 的诊断语义另见 [project-doctor.md](./project-doctor.md)。
+EngineLink 对外只有 **6 个 MCP 工具**，与 **6 条 CLI 命令**一一对应。实现都走 `EngineLinkService`。本文是这 6 个入口的原理、设计、输入与输出。
 
 入口：
 
